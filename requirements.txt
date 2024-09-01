@@ -1,0 +1,10 @@
+numpy
+scipy
+skimage
+trimesh
+tqdm
+matplotlib
+pyvista
+graph_tool
+pynrrd
+sklearn
