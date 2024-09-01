@@ -23,6 +23,8 @@ conda install -c conda-forge graph-tool
 2. Run a instance to midline volume conversion script, differences, pros and cons of each method are commented in the script and explained below.
 3. Run the midline_to_obj.py file to convert the midline volume to .obj files.
 
+If you want to visualise the data after any of these steps, I recommend dragging it into 3D Slicer, and hit the crosshair icon to center the view on the data.
+
 All outputs will be saved in the target folder
 Ex: 
 02000_02000_02000/02000_02000_02000_fb_avg_mask_thinned.nrrd
@@ -48,8 +50,8 @@ to allow for hole crossing, and end up inside of other objects.
 ### Distance map
 File: dist_map_3d_instance_to_midline_volume.py
 
-Faster than graph construction method, slower than front back average method,
-doesnt fill holes (morphological tunnels).
+Faster than graph construction method, slower than front back average method.
+Doesnt fill holes (morphological tunnels).
 Constructs distance map for each label
 Uses single value assumption along maximum PCA direction to take highest dist map
 value at each point to create the midline volume.
