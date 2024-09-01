@@ -1,10 +1,9 @@
 numpy
 scipy
-skimage
+scikit-image
+scikit-learn
 trimesh
 tqdm
 matplotlib
 pyvista
-graph_tool
 pynrrd
-sklearn
