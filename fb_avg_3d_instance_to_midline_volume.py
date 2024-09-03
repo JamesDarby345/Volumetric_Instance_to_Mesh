@@ -3,7 +3,6 @@ import numpy as np
 import nrrd
 import time
 import concurrent.futures
-import graph_tool.all as gt
 import argparse
 from tqdm import tqdm
 import threading
@@ -25,14 +24,16 @@ The front back average could leave the instance label, causing obj collisions
 with low probability.
 """
 
-def process_single_label(label_data, label_value, front=True, back=True):
+def process_single_label(label_data, label_value, front=True, back=True, mask_out=True):
     mask = (label_data == label_value)
     result = front_back_avg_of_structure(mask, front, back)
+    if mask_out:
+        result[mask != 1] = 0
     return result
 
 def process_single_label_wrapper(args):
-    data, label_val, pad_amount, rotation_info, front=True, back=True = args
-    thinned_data = process_single_label(data, label_val, front, back).astype(np.uint8)
+    data, label_val, pad_amount, rotation_info, front, back, mask_out = args
+    thinned_data = process_single_label(data, label_val, front, back, mask_out).astype(np.uint8)
     
     if pad_amount:
         pad_amount += 1
@@ -46,7 +47,7 @@ def process_single_label_wrapper(args):
 def write_nrrd_background(output_path, data, header):
     nrrd.write(output_path, data, header)
 
-def process_structures(nrrd_path, output_path, pad_amount=10, label_values=None, minObjSize=200, filter_labels=False, front=True, back=True):
+def process_structures(nrrd_path, output_path, pad_amount=10, label_values=None, minObjSize=200, filter_labels=False, front=True, back=True, mask_out=True):
     try:        
         original_data, header = nrrd.read(nrrd_path)
         
@@ -77,7 +78,7 @@ def process_structures(nrrd_path, output_path, pad_amount=10, label_values=None,
                     data = np.pad(data, pad_amount, mode='constant', constant_values=0)
                     data = connect_to_edge_3d(data, label_val, pad_amount+1, use_z=True, create_outline=False)
                 
-                args = (data, label_val, pad_amount, rotation_info, front, back)
+                args = (data, label_val, pad_amount, rotation_info, front, back, mask_out)
                 futures.append(executor.submit(process_single_label_wrapper, args))
 
             for future in concurrent.futures.as_completed(futures):
@@ -93,7 +94,7 @@ def process_structures(nrrd_path, output_path, pad_amount=10, label_values=None,
         print(f"Error processing {nrrd_path}: {str(e)}")
         return None, None
 
-def process_directory(input_directory, pad_amount=0, label_values=None, test_mode=False, replace=False, show_time=False, filter_labels=False, front=True, back=True):
+def process_directory(input_directory, pad_amount=0, label_values=None, test_mode=False, replace=False, show_time=False, filter_labels=False, front=True, back=True, mask_out=True):
     files_to_process = []
     write_threads = []
     for root, _, files in os.walk(input_directory):
@@ -118,7 +119,7 @@ def process_directory(input_directory, pad_amount=0, label_values=None, test_mod
     for input_path, output_path in tqdm(files_to_process, desc="Processing files", unit="file"):
         overall_start_time = time.time()
         
-        result, write_thread = process_structures(input_path, output_path, pad_amount, label_values, filter_labels=filter_labels, front=front, back=back)
+        result, write_thread = process_structures(input_path, output_path, pad_amount, label_values, filter_labels=filter_labels, front=front, back=back, mask_out=mask_out)
         
         if result is None and show_time:
             print(f"Error processing file: {os.path.basename(input_path)}")
@@ -152,7 +153,7 @@ if __name__ == '__main__':
     label_values = None  # List of label values to process, pass None to process all labels
     overall_start_time = time.time()
     process_directory(input_directory, pad_amount=0, label_values=label_values, test_mode=args.test, 
-                      replace=args.replace, show_time=args.time, filter_labels=args.filter_labels, front=args.front, back=args.back)
+                      replace=args.replace, show_time=args.time, filter_labels=args.filter_labels, front=args.front, back=args.back, mask_out=True)
     
     if args.time:
         print(f"Total execution time: {time.time() - overall_start_time:.2f} seconds")

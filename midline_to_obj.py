@@ -1,5 +1,6 @@
 import sys
 import numpy as np
+from tqdm import tqdm
 import nrrd
 import os
 import trimesh
@@ -11,6 +12,7 @@ import glob
 import argparse
 from sklearn.decomposition import PCA
 from midline_helper_simplified import *
+import re
 
 def print_timing(message, elapsed_time, should_print):
     if should_print:
@@ -178,7 +180,7 @@ def array_to_thin_sheet_obj(array, filename, max_distance=1.8, min_vertices=800,
     # print(f"Found {len(vertices)} non-zero elements.")
     
     if len(vertices) <= min_vertices:
-        print(f"Not enough points to create a mesh for {filename}, skipping.")
+        # print(f"Not enough points to create a mesh for {filename}, skipping.")
         return None
 
     prep_start = time.time()
@@ -261,9 +263,8 @@ def process_single_value(args):
     print_timing(f"Processing value {value}", end_time - start_time, should_print_timing)
 
 def process_single_file(args):
-    input_nrrd_path, max_distance, min_vertices, visualise, test, reconnection_mult, should_print_timing, should_fix_normals = args
+    input_nrrd_path, max_distance, min_vertices, visualise, test, reconnection_mult, should_print_timing, should_fix_normals, replace = args
     start_time = time.time()
-    print(f"Processing file: {input_nrrd_path}")
     
     # Create output directory
     output_obj_dir = os.path.join(os.path.dirname(input_nrrd_path), 'obj')
@@ -292,9 +293,15 @@ def process_single_file(args):
         if test:
             if value != 1 and value != 2:
                 continue
+        temp_output_obj_path = f'{output_obj_path}_{value}.obj'
+        
+        # Check if file exists and skip if not replacing
+        if os.path.exists(temp_output_obj_path) and not replace:
+            # print(f"Skipping existing file: {temp_output_obj_path}")
+            continue
+        
         array = original_array.copy()
         array[original_array != value] = 0
-        temp_output_obj_path = f'{output_obj_path}_{value}.obj'
         mesh = array_to_thin_sheet_obj(array, temp_output_obj_path, max_distance=max_distance, min_vertices=min_vertices, space_origin=space_origin, reconnection_mult=reconnection_mult, avg_pca_normal=avg_pca_normal, should_print_timing=should_print_timing, should_fix_normals=should_fix_normals)
         if visualise:
             visualize_mesh(mesh)
@@ -323,20 +330,21 @@ def midline_labels_to_obj(input_nrrd_path, output_obj_path, array_values=None, m
     with multiprocessing.Pool() as pool:
         pool.map(process_single_value, args_list)
 
-def process_folder(input_folder, max_distance=1.5, min_vertices=500, visualise=False, test=False, reconnection_mult=3, should_print_timing=False, should_fix_normals=True):
+def process_folder(input_folder, max_distance=1.5, min_vertices=500, visualise=False, test=False, reconnection_mult=3, should_print_timing=False, should_fix_normals=True, replace=False):
     # Find all *_mask_thinned.nrrd files in the input folder and its subfolders
     nrrd_files = glob.glob(os.path.join(input_folder, '**', '*_mask_thinned.nrrd'), recursive=True)
+    nrrd_files = [f for f in nrrd_files if re.match(file_type_pattern, f)]
     
     if not nrrd_files:
-        print(f"No *_mask_thinned.nrrd files found in {input_folder}")
+        print(f"No matching *_mask_thinned.nrrd files found in {input_folder}")
         return
     
     # Prepare arguments for multiprocessing
-    args_list = [(file, max_distance, min_vertices, visualise, test, reconnection_mult, should_print_timing, should_fix_normals) for file in nrrd_files]
+    args_list = [(file, max_distance, min_vertices, visualise, test, reconnection_mult, should_print_timing, should_fix_normals, replace) for file in nrrd_files]
     
     # Use multiprocessing to process files in parallel
     with multiprocessing.Pool() as pool:
-        pool.map(process_single_file, args_list)
+        list(tqdm(pool.imap(process_single_file, args_list), total=len(args_list), desc="Processing files"))
 
 
 
@@ -347,9 +355,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process NRRD files to OBJ meshes.")
     parser.add_argument("--vis", action="store_true", help="Visualize the meshes after creation.")
     parser.add_argument("--test", action="store_true", help="Process only the first NRRD file found.")
-    parser.add_argument("--rcm", type=float, default=50, help="Reconnection multiplier for the surface.") #larger values connects across larger 'holes' more aggresively
+    parser.add_argument("--rcm", type=float, default=50, help="Reconnection multiplier for the surface.")
     parser.add_argument("--time", action="store_true", help="Print timing information")
-    parser.add_argument("--nonormals", action="store_true", help="Disable normal fixing") #Runs a few seconds faster with normal fixing disabled
+    parser.add_argument("--nonormals", action="store_true", help="Disable normal fixing")
+    parser.add_argument("--file_type", choices=['fb_avg', 'front', 'back', 'graph', 'dist_map', 'all'], 
+                        default='all', help="Specify the type of NRRD file to process")
+    parser.add_argument("--replace", action="store_true", help="Replace existing OBJ files")
     args = parser.parse_args()
     
     should_print_timing = args.time
@@ -360,14 +371,23 @@ if __name__ == "__main__":
     
     if args.test:
         #temp testing
-        path = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um/02000_02256_04816/02000_02256_04816_front_mask_thinned.nrrd'
-        process_single_file((path, 1.5, 500, args.vis, False, reconnection_mult, should_print_timing, should_fix_normals))
+        path = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um/02000_02256_04816/02000_02256_04816_fb_avg_mask_thinned.nrrd'
+        process_single_file((path, 1.5, 500, args.vis, False, reconnection_mult, should_print_timing, should_fix_normals, args.replace))
         # p1 = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um/01744_02000_04560/01744_02000_04560_graph_mask_thinned.nrrd'
         # process_single_file((p1, 1.5, 500, args.vis, False, reconnection_mult, should_print_timing, should_fix_normals))
         # p2 = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um/01744_02000_04304/01744_02000_04304_dist_map_mask_thinned.nrrd'
         # process_single_file((p2, 1.5, 500, args.vis, False, reconnection_mult, should_print_timing, should_fix_normals))
     else:
-        process_folder(input_directory, max_distance=1.5, min_vertices=500, visualise=args.vis, reconnection_mult=reconnection_mult, should_print_timing=should_print_timing, should_fix_normals=should_fix_normals)
+        file_type_pattern = {
+            'fb_avg': r'.*fb_avg_mask_thinned\.nrrd$',
+            'front': r'.*front_mask_thinned\.nrrd$',
+            'back': r'.*back_mask_thinned\.nrrd$',
+            'graph': r'.*graph_mask_thinned\.nrrd$',
+            'dist_map': r'.*dist_map_mask_thinned\.nrrd$',
+            'all': r'.*_mask_thinned\.nrrd$'
+        }[args.file_type]
+
+        process_folder(input_directory, max_distance=1.5, min_vertices=500, visualise=args.vis, reconnection_mult=reconnection_mult, should_print_timing=should_print_timing, should_fix_normals=should_fix_normals, replace=args.replace)
     
     overall_end_time = time.time()
     print_timing("Total execution time", overall_end_time - stime, should_print_timing)
