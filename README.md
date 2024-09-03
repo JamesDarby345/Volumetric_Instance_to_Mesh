@@ -20,7 +20,8 @@ conda install -c conda-forge graph-tool
 
 0. Change the paths in the scripts to point to the 3d volumetric instance nrrd file folder, the expected name is zyx_mask.nrrd as on the download server, within the zyx folder names. <br> Ex: 02000_02000_02000/02000_02000_02000_mask.nrrd
 1. Run filter_and_reassign_labels.py to filter out small objects and reassign labels in the nrrd files,which will make running the next scripts faster.
-2. Run a instance to midline volume conversion script, differences, pros and cons of each method are commented in the script and explained below.
+2. Run a instance to midline volume conversion script, differences, pros and cons of each method are commented in the script and explained below.<br>
+Update: Use fb_avg_3dinstance_to_midline_volume.py, it is the fastest and produces the best results now. By masking out voxels that left the original label followed by delauney2d, its downsides were negated.
 3. Run the midline_to_obj.py file to convert the midline volume to .obj files.
 
 If you want to visualise the data after any of these steps, I recommend dragging it into Napari, or into 3D Slicer (hit the crosshair icon to center the view on the data in slicer).
@@ -74,6 +75,8 @@ See how the resulting mesh is connecting between different parts of the sheet, r
 ### Front back average
 File: fb_avg_3d_instance_to_midline_volume.py
 
+**Update:** masking voxels that left the original label and relying on delauney_2d triangulation to fill holes results in this method being the fastest and produces the best results. Consider the other two deprecated. 
+
 Fastest midline calculation method.<br>
 Front and back of the instance volume are averaged to create a midline volume.<br>
 PCA components are used to determine the orientation of the structure.<br>
@@ -82,7 +85,7 @@ Disconnected fibres in the same label are an issue for this method as the
 front back average ends up out in space off of the sheet.<br>
 Follows midline more closely on aggresive curves.<br>
 Morphological tunnels are filled during the mesh creation process.<br>
-Leads to closer midlines, but rougher labels, especially around holes.<br>
+Leads to closer midlines, but rougher labels.<br>
 The front back average could leave the instance label, causing obj collisions 
 with low probability.<br>
 
