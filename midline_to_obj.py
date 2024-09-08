@@ -192,6 +192,8 @@ def array_to_thin_sheet_obj(array, filename, max_distance=1.8, min_vertices=800,
     
     # Create edges from these pairs
     edges = np.array(list(pairs))
+
+    edges = np.hstack([[2, edge[0], edge[1]] for edge in edges])
     
     # Create a PyVista PolyData object
     mesh = pv.PolyData(vertices, lines=edges)
