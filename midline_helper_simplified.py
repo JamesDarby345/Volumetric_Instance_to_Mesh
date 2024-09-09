@@ -25,9 +25,10 @@ def create_slicer_nrrd_header(data, z=0, y=0, x=0, encoding='raw'):
     for value in unique_values:
         if value == 0:  # Skip background
             continue
-        value = value%len(colormap)
-        if value in colormap:
-            color = colormap[value]
+
+        colormap_value = value%len(colormap)
+        if colormap_value in colormap:
+            color = colormap[colormap_value]
             header.update({
                 f'Segment{segment_index}_ID': f'Segment_{value}',
                 f'Segment{segment_index}_Name': f'Segment_{value}',
