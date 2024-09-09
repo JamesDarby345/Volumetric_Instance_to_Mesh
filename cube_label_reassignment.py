@@ -1,6 +1,5 @@
 import os
 import re
-from matplotlib.colors import BoundaryNorm, ListedColormap
 import numpy as np
 import nrrd
 import matplotlib.pyplot as plt
@@ -27,57 +26,64 @@ def find_mask_files(input_directory):
     
     return mask_files
 
-def reassign_labels(mask_files, cube_size):
-    label_value_map = {}
+def group_labels(mask_files, cube_size):
+    label_groups = {}
     processed_cubes = set()
+    next_group_id = 1
 
     def process_cube(z_y_x):
+        nonlocal next_group_id
         if z_y_x in processed_cubes:
             return
 
-        cube_data, _ = nrrd.read(mask_files[z_y_x])
-        unique_labels = np.unique(cube_data)
-
-        for label in unique_labels:
-            if label == 0:  # Assuming 0 is background
-                continue
-            if label not in label_value_map:
-                label_value_map[label] = {z_y_x: label}
-            else:
-                label_value_map[label][z_y_x] = label
-
+        cube_data, cube_header = nrrd.read(mask_files[z_y_x])
         processed_cubes.add(z_y_x)
 
         # Check adjacent cubes
         z, y, x = map(int, z_y_x.split('_'))
         adjacent_coords = [
-            f"{z+cube_size}_{y}_{x}", f"{z-cube_size}_{y}_{x}",
-            f"{z}_{y+cube_size}_{x}", f"{z}_{y-cube_size}_{x}",
-            f"{z}_{y}_{x+cube_size}", f"{z}_{y}_{x-cube_size}"
+            f"{str(z+cube_size).zfill(5)}_{str(y).zfill(5)}_{str(x).zfill(5)}",
+            f"{str(z-cube_size).zfill(5)}_{str(y).zfill(5)}_{str(x).zfill(5)}",
+            f"{str(z).zfill(5)}_{str(y+cube_size).zfill(5)}_{str(x).zfill(5)}",
+            f"{str(z).zfill(5)}_{str(y-cube_size).zfill(5)}_{str(x).zfill(5)}",
+            f"{str(z).zfill(5)}_{str(y).zfill(5)}_{str(x+cube_size).zfill(5)}",
+            f"{str(z).zfill(5)}_{str(y).zfill(5)}_{str(x-cube_size).zfill(5)}"
         ]
 
         for adj_z_y_x in adjacent_coords:
             if adj_z_y_x in mask_files and adj_z_y_x not in processed_cubes:
-                adj_cube_data, _ = nrrd.read(mask_files[adj_z_y_x])
-                connected_labels = is_connected(cube_data, adj_cube_data)
-
+                adj_cube_data, adj_header = nrrd.read(mask_files[adj_z_y_x])
+                connected_labels = is_connected(cube_data, cube_header, adj_cube_data, adj_header, cube_size=cube_size)
+                print(z_y_x, adj_z_y_x, connected_labels)
                 for label1, label2 in connected_labels:
-                    if label1 in label_value_map:
-                        if label2 not in label_value_map:
-                            label_value_map[label1][adj_z_y_x] = label2
-                        else:
-                            # Merge label maps if both labels exist
-                            label_value_map[label1].update(label_value_map[label2])
-                            del label_value_map[label2]
+                    group_found = False
+                    for group_id, group in label_groups.items():
+                        if (z_y_x, label1) in group or (adj_z_y_x, label2) in group:
+                            group.add((z_y_x, label1))
+                            group.add((adj_z_y_x, label2))
+                            group_found = True
+                            break
+                    
+                    if not group_found:
+                        label_groups[next_group_id] = {(z_y_x, label1), (adj_z_y_x, label2)}
+                        next_group_id += 1
 
                 process_cube(adj_z_y_x)
 
-    # Start processing from the first cube
-    first_z_y_x = next(iter(mask_files))
-    process_cube(first_z_y_x)
+        # Add any remaining labels in the current cube to new groups
+        for label in np.unique(cube_data):
+            if label == 0:  # Skip background
+                continue
+            if not any((z_y_x, label) in group for group in label_groups.values()):
+                label_groups[next_group_id] = {(z_y_x, label)}
+                next_group_id += 1
 
-    return label_value_map
+    # Process all cubes
+    for z_y_x in mask_files:
+        if z_y_x not in processed_cubes:
+            process_cube(z_y_x)
 
+    return label_groups
 
 def is_connected(cube1, header1, cube2, header2, cube_size=256, vis=False):
     # Extract space origin from headers
@@ -210,7 +216,7 @@ def is_connected(cube1, header1, cube2, header2, cube_size=256, vis=False):
     return connected_labels
 
 #Buggy; removing labels etc on cube 2
-def relabel_cube(cube1, header1, p1, cube2, header2, p2, paired_labels, output_folder):
+def relabel_paired_cubes(cube1, header1, p1, cube2, header2, p2, paired_labels, output_folder):
     # Create a mapping for the second cube
     label_map = dict(paired_labels)  # Use paired_labels directly
     print(label_map)
@@ -247,6 +253,54 @@ def relabel_cube(cube1, header1, p1, cube2, header2, p2, paired_labels, output_f
     
     return relabeled_cube2, label_map
 
+def create_label_group_mapping(label_groups, mask_files):
+    mapping = {}
+    
+    for z_y_x in mask_files:
+        mapping[z_y_x] = []
+        for group_id, group in label_groups.items():
+            for cube_z_y_x, label in group:
+                if cube_z_y_x == z_y_x:
+                    mapping[z_y_x].append((label, group_id))
+        
+        # Sort the list by label value
+        mapping[z_y_x].sort(key=lambda x: x[0])
+    
+    return mapping
+
+def relabel_cubes(label_group_mapping, mask_files, output_folder):
+    os.makedirs(output_folder, exist_ok=True)
+    
+    for z_y_x, file_path in mask_files.items():
+        cube, header = nrrd.read(file_path)
+        cube = cube.astype(np.uint16)  # Convert input cube to uint16
+        relabeled_cube = np.zeros_like(cube, dtype=np.uint16)
+        
+        # Create a mapping for this cube
+        label_map = {label: group_id for label, group_id in label_group_mapping[z_y_x]}
+        
+        # Relabel the cube
+        for old_label, new_label in label_map.items():
+            relabeled_cube[cube == old_label] = new_label
+        
+        # Handle any labels not in the mapping, should be none
+        unmapped_labels = set(np.unique(cube)) - set(label_map.keys()) - {0}
+        max_label = max(max(label_map.values()), np.max(relabeled_cube))
+        for old_label in unmapped_labels:
+            max_label += 1
+            relabeled_cube[cube == old_label] = max_label
+        
+        # Save relabeled cube
+        filename = os.path.basename(file_path)
+        new_filename = filename.replace('_mask.nrrd', '_relabeled_mask.nrrd')
+        output_path = os.path.join(output_folder, new_filename)
+        z, y, x = header['space origin']
+        new_header = create_slicer_nrrd_header(relabeled_cube, z, y, x)
+        nrrd.write(output_path, relabeled_cube.astype(np.uint16), new_header)  # Save as uint16
+        
+        print(f"Relabeled cube saved: {output_path}")
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Process cube labels and optionally visualize results.')
     parser.add_argument('--vis', action='store_true', help='Enable visualization')
@@ -258,19 +312,23 @@ if __name__ == '__main__':
     cube_size = args.cube_size
 
     mask_files = find_mask_files(input_directory)
+    p1 = mask_files['01744_02256_04048']
+    p2 = mask_files['01744_02256_04304']
+    p3 = mask_files['01744_02256_04560']
+    # mask_files = {k: v for k, v in mask_files.items() if k in ['01744_02256_04048', '01744_02256_04304', '01744_02256_04560']}
+    
+    # cube1, header1 = nrrd.read(p1)
+    # cube2, header2 = nrrd.read(p2)
 
-    p1 = mask_files['02000_02000_02000']
-    p2 = mask_files['02000_02256_02000']
-    cube1, header1 = nrrd.read(p1)
-    cube2, header2 = nrrd.read(p2)
+    # result = is_connected(cube1, header1, cube2, header2, cube_size=cube_size, vis=args.vis)
+    # print(result)
 
-    result = is_connected(cube1, header1, cube2, header2, cube_size=cube_size, vis=args.vis)
-    print(result)
-
-    relabel_cube(cube1, header1, p1, cube2, header2, p2, result, output_folder=current_directory+'/relabeled_cubes')
+    # relabel_cube(cube1, header1, p1, cube2, header2, p2, result, output_folder=current_directory+'/relabeled_cubes')
     # # Print the first 3 results
     # for z_y_x, file_path in list(mask_files.items())[:3]:
     #     print(f"{z_y_x}: {file_path}")
 
-    # # Usage
-    # label_value_map = reassign_labels(mask_files, cube_size)
+    # Usage
+    label_groups = group_labels(mask_files, cube_size)
+    label_group_mapping = create_label_group_mapping(label_groups, mask_files)
+    relabel_cubes(label_group_mapping, mask_files, output_folder=current_directory+'/relabeled_cubes')

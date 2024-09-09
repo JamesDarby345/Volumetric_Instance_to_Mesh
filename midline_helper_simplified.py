@@ -25,6 +25,7 @@ def create_slicer_nrrd_header(data, z=0, y=0, x=0, encoding='raw'):
     for value in unique_values:
         if value == 0:  # Skip background
             continue
+        value = value%len(colormap)
         if value in colormap:
             color = colormap[value]
             header.update({
