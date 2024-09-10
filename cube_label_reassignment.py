@@ -30,10 +30,11 @@ def find_mask_files(input_directory):
     
     return mask_files
 
-def group_labels(mask_files, cube_size):
+def group_labels(mask_files, cube_size, half_winding_plane=None):
     label_groups = {}
     processed_cubes = set()
     next_group_id = 1
+    errors = []
 
     def merge_groups(group1_id, group2_id):
         nonlocal label_groups
@@ -51,7 +52,15 @@ def group_labels(mask_files, cube_size):
         if z_y_x in processed_cubes:
             return
 
-        cube_data, cube_header = nrrd.read(mask_files[z_y_x])
+        try:
+            cube_data, cube_header = nrrd.read(mask_files[z_y_x])
+            # Check if the dimension is 3
+            if cube_header.get('dimension') != 3:
+                return f"Error: Cube {z_y_x} has incorrect dimension: {cube_header.get('dimension')}. Expected 3."
+        except Exception as e:
+            errors.append((z_y_x, str(e)))
+            return
+
         processed_cubes.add(z_y_x)
 
         # Check adjacent cubes
@@ -67,7 +76,21 @@ def group_labels(mask_files, cube_size):
 
         for adj_z_y_x in adjacent_coords:
             if adj_z_y_x in mask_files and adj_z_y_x not in processed_cubes:
-                adj_cube_data, adj_header = nrrd.read(mask_files[adj_z_y_x])
+                try:
+                    adj_cube_data, adj_header = nrrd.read(mask_files[adj_z_y_x])
+                except Exception as e:
+                    errors.append((adj_z_y_x, str(e)))
+                    continue
+                
+                # Check if the connection crosses the half-winding plane
+                if half_winding_plane:
+                    axis, value = half_winding_plane
+                    axis_index = {'x': 2, 'y': 1, 'z': 0}[axis]
+                    current_value = int(z_y_x.split('_')[axis_index])
+                    adjacent_value = int(adj_z_y_x.split('_')[axis_index])
+                    if (current_value < value <= adjacent_value) or (adjacent_value < value <= current_value):
+                        continue  # Skip this connection if it crosses the half-winding plane
+                
                 connected_labels = is_connected(cube_data, cube_header, adj_cube_data, adj_header, cube_size=cube_size)
                 print(z_y_x, adj_z_y_x, connected_labels)
                 for label1, label2 in connected_labels:
@@ -102,6 +125,12 @@ def group_labels(mask_files, cube_size):
     for z_y_x in mask_files:
         if z_y_x not in processed_cubes:
             process_cube(z_y_x)
+
+    # Print errors at the end
+    if errors:
+        print("\nErrors encountered while processing cubes:")
+        for cube, error in errors:
+            print(f"Cube {cube}: {error}")
 
     return label_groups
 
@@ -292,51 +321,68 @@ def create_label_group_mapping(label_groups, mask_files):
     return mapping
 
 def relabel_single_cube(z_y_x, file_path, output_folder, label_group_mapping, overwrite=False):
-        if output_folder is None:
-            output_folder = os.path.dirname(file_path)
-
+    try:
         cube, header = nrrd.read(file_path)
-        dtype = np.uint16
-        cube = cube.astype(dtype)
-        relabeled_cube = np.zeros_like(cube, dtype=dtype)
         
-        # Create a mapping for this cube
-        label_map = {label: group_id for label, group_id in label_group_mapping[z_y_x]}
-        # print(label_map)
-        # Relabel the cube
-        for old_label, new_label in label_map.items():
-            relabeled_cube[cube == old_label] = new_label
+        # Check if the dimension is 3
+        if header.get('dimension') != 3:
+            return f"Error: Cube {z_y_x} has incorrect dimension: {header.get('dimension')}. Expected 3."
         
-        # Handle any labels not in the mapping, should be none
-        unmapped_labels = set(np.unique(cube)) - set(label_map.keys()) - {0}
-        max_label = max(max(label_map.values()), np.max(relabeled_cube))
-        for old_label in unmapped_labels:
-            max_label += 1
-            relabeled_cube[cube == old_label] = max_label
-        
-        # Save relabeled cube
-        filename = os.path.basename(file_path)
-        if not overwrite:
-            new_filename = filename.replace('_mask.nrrd', '_relabeled_mask.nrrd')
-        else:
-            new_filename = filename
-        output_path = os.path.join(output_folder, new_filename)
-        z,y,x = z_y_x.split('_')
-        z, y, x = int(z), int(y), int(x)
-        new_header = create_slicer_nrrd_header(relabeled_cube, z, y, x, encoding='gzip')
-        nrrd.write(output_path, relabeled_cube.astype(dtype), new_header)
-        
-        return f"Relabeled cube saved: {output_path}"
+    except Exception as e:
+        return f"Error reading cube {z_y_x}: {str(e)}"
+
+    if output_folder is None:
+        output_folder = os.path.dirname(file_path)
+
+    dtype = np.uint16
+    cube = cube.astype(dtype)
+    relabeled_cube = np.zeros_like(cube, dtype=dtype)
+    
+    # Create a mapping for this cube
+    label_map = {label: group_id for label, group_id in label_group_mapping[z_y_x]}
+    # print(label_map)
+    # Relabel the cube
+    for old_label, new_label in label_map.items():
+        relabeled_cube[cube == old_label] = new_label
+    
+    # Handle any labels not in the mapping, should be none
+    unmapped_labels = set(np.unique(cube)) - set(label_map.keys()) - {0}
+    max_label = max(max(label_map.values()), np.max(relabeled_cube))
+    for old_label in unmapped_labels:
+        max_label += 1
+        relabeled_cube[cube == old_label] = max_label
+    
+    # Save relabeled cube
+    filename = os.path.basename(file_path)
+    if not overwrite:
+        new_filename = filename.replace('_mask.nrrd', '_relabeled_mask.nrrd')
+    else:
+        new_filename = filename
+    output_path = os.path.join(output_folder, new_filename)
+    z,y,x = z_y_x.split('_')
+    z, y, x = int(z), int(y), int(x)
+    new_header = create_slicer_nrrd_header(relabeled_cube, z, y, x, encoding='gzip')
+    nrrd.write(output_path, relabeled_cube.astype(dtype), new_header)
+    
+    return f"Relabeled cube saved: {output_path}"
 
 def relabel_cubes(label_group_mapping, mask_files, output_folder=None, overwrite=False):
     if output_folder:
         os.makedirs(output_folder, exist_ok=True)
 
+    errors = []
+
     with ProcessPoolExecutor() as executor:
         futures = [executor.submit(relabel_single_cube, z_y_x, file_path, output_folder, label_group_mapping, overwrite) for z_y_x, file_path in mask_files.items()]
         for future in tqdm(as_completed(futures), total=len(mask_files), desc="Relabeling cubes"):
-            # print(future.result())
-            pass
+            result = future.result()
+            if result.startswith("Error"):
+                errors.append(result)
+
+    if errors:
+        print("\nErrors encountered while relabeling cubes:")
+        for error in errors:
+            print(error)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Relabel sheets across nrrd cubes.')
@@ -346,6 +392,7 @@ if __name__ == '__main__':
     parser.add_argument("--output-path", type=str, help="(Optional) Path to the directory to save relabeled mask files into")
     parser.add_argument("--overwrite", action='store_true', help='Overwrite existing files instead of appending _relabeled_mask to the end of file names')
     parser.add_argument("--no-filter", action='store_true', help='Dont run filter_and_reassign_labels before relabeling if passed')
+    parser.add_argument("--half-winding-plane", type=str, default=None, help='Specify the half-winding plane (e.g., "x:4048")')
     
     args = parser.parse_args()
 
@@ -359,6 +406,13 @@ if __name__ == '__main__':
 
     mask_files = find_mask_files(input_directory)
 
-    label_groups = group_labels(mask_files, args.cube_size)
+    # Parse the half-winding plane argument
+    if args.half_winding_plane: 
+        half_winding_axis, half_winding_value = args.half_winding_plane.split(':')
+        half_winding_plane = (half_winding_axis, int(half_winding_value))
+    else:
+        half_winding_plane = None
+
+    label_groups = group_labels(mask_files, args.cube_size, half_winding_plane=half_winding_plane)
     label_group_mapping = create_label_group_mapping(label_groups, mask_files)
     relabel_cubes(label_group_mapping, mask_files, output_folder=output_directory, overwrite=args.overwrite)
