@@ -2,7 +2,7 @@ import os
 import nrrd
 import numpy as np
 import argparse
-from midline_helper_simplified import filter_and_reassign_labels
+from midline_helper_simplified import filter_and_reassign_labels, create_slicer_nrrd_header
 from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
 
@@ -17,9 +17,15 @@ def process_file(file_path, cc_min_size=200):
     try:
         # Load the NRRD file
         data, header = nrrd.read(file_path)
-        
+       
         # Apply filter_and_reassign_labels
         processed_data = filter_and_reassign_labels(data, cc_min_size=cc_min_size)
+        
+        # Extract z, y, x from the file path
+        folder_name = os.path.basename(os.path.dirname(file_path))
+        z, y, x = map(int, folder_name.split('_')[:3])
+
+        header = create_slicer_nrrd_header(processed_data, z, y, x)
         
         # Save the processed data back to the same file
         nrrd.write(file_path, processed_data, header)
@@ -32,7 +38,7 @@ def process_mask_files(directory):
     mask_files = []
     for root, dirs, files in os.walk(directory):
         for file in files:
-            if file.endswith('_mask.nrrd'):
+            if file.endswith('_mask.nrrd') and not file.endswith('_relabeled_mask.nrrd'):
                 mask_files.append(os.path.join(root, file))
     
     with ProcessPoolExecutor() as executor:

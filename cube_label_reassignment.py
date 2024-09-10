@@ -8,6 +8,7 @@ import argparse
 from tqdm import tqdm
 from midline_helper_simplified import create_slicer_nrrd_header
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from filter_and_reassign_labels import process_mask_files
 
 """
 This script is used to relabel the volumetric cube labels so that the same sheets
@@ -108,7 +109,7 @@ def is_connected(cube1, header1, cube2, header2, cube_size=256, vis=False):
     # Extract space origin from headers
     origin1 = np.array(header1['space origin'])
     origin2 = np.array(header2['space origin'])
-
+    # print(origin1, origin2)
     # Calculate the difference to determine which face is adjacent
     diff = origin2 - origin1
 
@@ -118,6 +119,9 @@ def is_connected(cube1, header1, cube2, header2, cube_size=256, vis=False):
 
     # Check if faces are actually adjacent using cube_size
     if np.abs(diff[axis]) != cube_size or np.any(np.abs(diff[np.arange(3) != axis]) > 1e-6):
+        print('no faces adjacent')
+        print('np.abs(diff[axis]) != cube_size ', np.abs(diff[axis]) != cube_size, np.abs(diff[axis]))
+        print('np.any(np.abs(diff[np.arange(3) != axis]) > 1e-6) ', np.any(np.abs(diff[np.arange(3) != axis]) > 1e-6))
         return []  # No faces are adjacent, return an empty list
 
     face_index = -1 if is_positive else 0
@@ -287,7 +291,10 @@ def create_label_group_mapping(label_groups, mask_files):
     
     return mapping
 
-def relabel_single_cube(z_y_x, file_path, output_folder, label_group_mapping):
+def relabel_single_cube(z_y_x, file_path, output_folder, label_group_mapping, overwrite=False):
+        if output_folder is None:
+            output_folder = os.path.dirname(file_path)
+
         cube, header = nrrd.read(file_path)
         dtype = np.uint16
         cube = cube.astype(dtype)
@@ -309,7 +316,10 @@ def relabel_single_cube(z_y_x, file_path, output_folder, label_group_mapping):
         
         # Save relabeled cube
         filename = os.path.basename(file_path)
-        new_filename = filename.replace('_mask.nrrd', '_relabeled_mask.nrrd')
+        if not overwrite:
+            new_filename = filename.replace('_mask.nrrd', '_relabeled_mask.nrrd')
+        else:
+            new_filename = filename
         output_path = os.path.join(output_folder, new_filename)
         z,y,x = z_y_x.split('_')
         z, y, x = int(z), int(y), int(x)
@@ -318,55 +328,37 @@ def relabel_single_cube(z_y_x, file_path, output_folder, label_group_mapping):
         
         return f"Relabeled cube saved: {output_path}"
 
-def relabel_cubes(label_group_mapping, mask_files, output_folder):
-    os.makedirs(output_folder, exist_ok=True)
+def relabel_cubes(label_group_mapping, mask_files, output_folder=None, overwrite=False):
+    if output_folder:
+        os.makedirs(output_folder, exist_ok=True)
 
     with ProcessPoolExecutor() as executor:
-        futures = [executor.submit(relabel_single_cube, z_y_x, file_path, output_folder, label_group_mapping) for z_y_x, file_path in mask_files.items()]
+        futures = [executor.submit(relabel_single_cube, z_y_x, file_path, output_folder, label_group_mapping, overwrite) for z_y_x, file_path in mask_files.items()]
         for future in tqdm(as_completed(futures), total=len(mask_files), desc="Relabeling cubes"):
             # print(future.result())
             pass
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Process cube labels and optionally visualize results.')
-    parser.add_argument('--vis', action='store_true', help='Enable visualization')
+    parser = argparse.ArgumentParser(description='Relabel sheets across nrrd cubes.')
+    parser.add_argument('--vis', action='store_true', help='Enable visualization for testing')
     parser.add_argument('--cube-size', type=int, default=256, help='Cube size (default: 256)')
+    parser.add_argument("--input-path", type=str, help="Path to the directory containing mask files")
+    parser.add_argument("--output-path", type=str, help="(Optional) Path to the directory to save relabeled mask files into")
+    parser.add_argument("--overwrite", action='store_true', help='Overwrite existing files instead of appending _relabeled_mask to the end of file names')
+    parser.add_argument("--no-filter", action='store_true', help='Dont run filter_and_reassign_labels before relabeling if passed')
+    
     args = parser.parse_args()
 
-    current_directory = os.getcwd()
-    input_directory = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um'
-    cube_size = args.cube_size
+    default_input_directory = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um'
+    input_directory = args.input_path if args.input_path else default_input_directory
+    output_directory = args.output_path if args.output_path else None
+
+    # by default, run filter_and_reassign_labels on the input directory *_mask.nrrd files, but not *_relabeled_mask.nrrd files
+    if not args.no_filter:
+        process_mask_files(input_directory)
 
     mask_files = find_mask_files(input_directory)
-    p1 = mask_files['01744_02256_04048']
-    p2 = mask_files['01744_02256_04304']
-    p3 = mask_files['01744_02256_04560']
-    p4 = mask_files['01744_02512_04304']
-    p5 = mask_files['01744_02000_04304']
-    p6 = mask_files['01744_02000_04560']
-    p8 = mask_files['01744_02512_04560']
-    p9 = mask_files['01744_02512_04048']
 
-    mask_files = {k: v for k, v in mask_files.items() if k in ['01744_02256_04048', '01744_02256_04304', '01744_02256_04560', '01744_02512_04304', '01744_02000_04304', '01744_02000_04560', '01744_02512_04560', '01744_02512_04048']}
-    # mask_files = {k: v for k, v in mask_files.items() if k in ['00000_02408_04560', '00064_02664_04304']}
-    
-    # cube1, header1 = nrrd.read(p1)
-    # cube2, header2 = nrrd.read(p2)
-    # cube3, header3 = nrrd.read(p3)
-
-    # result1 = is_connected(cube1, header1, cube2, header2, cube_size=cube_size, vis=args.vis)
-    # result2 = is_connected(cube2, header2, cube3, header3, cube_size=cube_size, vis=args.vis)
-    # result3 = is_connected(cube1, header1, cube3, header3, cube_size=cube_size, vis=args.vis)
-    # print(result1)
-    # print(result2)
-    # print(result3)
-
-    # relabel_paired_cubes(cube1, header1, p1, cube2, header2, p2, result1, output_folder=current_directory+'/relabeled_cubes')
-    # # Print the first 3 results
-    # for z_y_x, file_path in list(mask_files.items())[:3]:
-    #     print(f"{z_y_x}: {file_path}")
-
-    # Usage
-    label_groups = group_labels(mask_files, cube_size)
+    label_groups = group_labels(mask_files, args.cube_size)
     label_group_mapping = create_label_group_mapping(label_groups, mask_files)
-    relabel_cubes(label_group_mapping, mask_files, output_folder=current_directory+'/relabeled_cubes/test2')
+    relabel_cubes(label_group_mapping, mask_files, output_folder=output_directory, overwrite=args.overwrite)

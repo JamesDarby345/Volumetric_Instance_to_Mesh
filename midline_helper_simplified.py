@@ -4,7 +4,7 @@ import graph_tool.all as gt
 from sklearn.decomposition import PCA
 import numba
 
-def create_slicer_nrrd_header(data, z=0, y=0, x=0, encoding='raw'):
+def create_slicer_nrrd_header(data, z=0, y=0, x=0, encoding='gzip'):
     unique_values = np.unique(data)
     colormap = get_slicer_colormap()
 
