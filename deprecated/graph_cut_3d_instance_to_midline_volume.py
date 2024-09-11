@@ -8,7 +8,7 @@ import argparse
 from tqdm import tqdm
 
 from midline_helper_simplified import *
-from distance_map_utils import (
+from deprecated.distance_map_utils import (
     create_label_distance_map_with_roi,
     prepare_distance_map
 )

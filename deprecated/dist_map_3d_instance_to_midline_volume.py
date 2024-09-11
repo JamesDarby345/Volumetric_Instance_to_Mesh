@@ -9,7 +9,7 @@ from tqdm import tqdm
 import threading
 
 from midline_helper_simplified import *
-from distance_map_utils import *
+from deprecated.distance_map_utils import *
 
 """
 Faster than graph construction method, slower than front back average method,

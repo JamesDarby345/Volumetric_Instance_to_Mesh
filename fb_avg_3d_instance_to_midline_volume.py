@@ -94,26 +94,27 @@ def process_structures(nrrd_path, output_path, pad_amount=10, label_values=None,
         print(f"Error processing {nrrd_path}: {str(e)}")
         return None, None
 
-def process_directory(input_directory, pad_amount=0, label_values=None, test_mode=False, replace=False, show_time=False, filter_labels=False, front=True, back=True, mask_out=True):
+def process_directory(input_directory, pad_amount=0, label_values=None, test_mode=False, replace=False, show_time=False, filter_labels=False, front=True, back=True, mask_out=True, use_relabeled=False):
     files_to_process = []
     write_threads = []
     for root, _, files in os.walk(input_directory):
-        mask_file = next((f for f in files if f.endswith('_mask.nrrd')), None)
+        mask_file_suffix = '_relabeled_mask.nrrd' if use_relabeled else '_mask.nrrd'
+        mask_file = next((f for f in files if f.endswith(mask_file_suffix)), None)
         if mask_file:
             input_path = os.path.join(root, mask_file)
             if front and not back:
-                output_path = input_path.replace('_mask.nrrd', '_front_mask_thinned.nrrd')
+                output_path = input_path.replace(mask_file_suffix, '_front_mask_thinned.nrrd')
             elif back and not front:
-                output_path = input_path.replace('_mask.nrrd', '_back_mask_thinned.nrrd')
+                output_path = input_path.replace(mask_file_suffix, '_back_mask_thinned.nrrd')
             else:
-                output_path = input_path.replace('_mask.nrrd', '_fb_avg_mask_thinned.nrrd')
+                output_path = input_path.replace(mask_file_suffix, '_fb_avg_mask_thinned.nrrd')
             
             if os.path.exists(output_path) and not replace:
                 continue
             
             files_to_process.append((input_path, output_path))
             
-            if test_mode and len(files_to_process) >= 1:
+            if test_mode and len(files_to_process) >= 3:
                 break
 
     for input_path, output_path in tqdm(files_to_process, desc="Processing files", unit="file"):
@@ -135,12 +136,14 @@ def process_directory(input_directory, pad_amount=0, label_values=None, test_mod
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Process 3D instance volumes to midline volumes.')
-    parser.add_argument('--test', action='store_true', help='Run in test mode (process only first file)')
-    parser.add_argument('--replace', action='store_true', help='Replace existing _front_mask_thinned.nrrd files')
+    parser.add_argument('--test', action='store_true', help='Run in test mode (process only first 3 files)')
+    parser.add_argument('--replace', action='store_true', help='Replace existing _mask_thinned.nrrd files')
     parser.add_argument('--time', action='store_true', help='Show execution time for each file')
     parser.add_argument('--filter-labels', action='store_true', help='Filter and reassign labels')
     parser.add_argument('--front', action='store_true', help='Use front of structure')
     parser.add_argument('--back', action='store_true', help='Use back of structure')
+    parser.add_argument('--input-dir', type=str, help='Input directory path')
+    parser.add_argument('--relabeled', action='store_true', help='Process _relabeled_mask.nrrd files instead of _mask.nrrd')
     args = parser.parse_args()
 
     # If neither front nor back is specified, use both and average
@@ -148,12 +151,13 @@ if __name__ == '__main__':
         args.front = True
         args.back = True
 
-    current_directory = os.getcwd()
-    input_directory = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um'
+    default_input_directory = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um'
+    input_directory = args.input_dir if args.input_dir else default_input_directory
     label_values = None  # List of label values to process, pass None to process all labels
     overall_start_time = time.time()
     process_directory(input_directory, pad_amount=0, label_values=label_values, test_mode=args.test, 
-                      replace=args.replace, show_time=args.time, filter_labels=args.filter_labels, front=args.front, back=args.back, mask_out=True)
+                      replace=args.replace, show_time=args.time, filter_labels=args.filter_labels, 
+                      front=args.front, back=args.back, mask_out=True, use_relabeled=args.relabeled)
     
     if args.time:
         print(f"Total execution time: {time.time() - overall_start_time:.2f} seconds")
