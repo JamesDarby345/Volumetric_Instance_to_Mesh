@@ -5,7 +5,6 @@ import time
 import concurrent.futures
 import argparse
 from tqdm import tqdm
-import threading
 
 from midline_helper_simplified import *
 
@@ -62,41 +61,41 @@ def process_structures(nrrd_path, output_path, pad_amount=10, label_values=None,
             unique_labels = np.unique(original_data)
             unique_labels = unique_labels[unique_labels != 0]
         
-        with concurrent.futures.ProcessPoolExecutor() as executor:
-            futures = []
-            for label_val in unique_labels:
-                data = original_data.copy()
-                primary_label_direction = calculate_orientation(data, label_val)
-                data, rotation_info = rotate_to_z_axis(data, primary_label_direction)
-                mask = data == label_val
-                data[mask != 1] = 0
-                
-                if np.sum(mask) == 0:
-                    continue
-                
-                if pad_amount:
-                    data = np.pad(data, pad_amount, mode='constant', constant_values=0)
-                    data = connect_to_edge_3d(data, label_val, pad_amount+1, use_z=True, create_outline=False)
-                
-                args = (data, label_val, pad_amount, rotation_info, front, back, mask_out)
-                futures.append(executor.submit(process_single_label_wrapper, args))
-
-            for future in concurrent.futures.as_completed(futures):
-                thinned_data = future.result()
-                midline_labels = np.maximum(midline_labels, thinned_data.astype(np.uint8))
+        for label_val in unique_labels:
+            data = original_data.copy()
+            primary_label_direction = calculate_orientation(data, label_val)
+            data, rotation_info = rotate_to_z_axis(data, primary_label_direction)
+            mask = data == label_val
+            data[mask != 1] = 0
+            
+            if np.sum(mask) == 0:
+                continue
+            
+            if pad_amount:
+                data = np.pad(data, pad_amount, mode='constant', constant_values=0)
+                data = connect_to_edge_3d(data, label_val, pad_amount+1, use_z=True, create_outline=False)
+            
+            args = (data, label_val, pad_amount, rotation_info, front, back, mask_out)
+            thinned_data = process_single_label_wrapper(args)
+            midline_labels = np.maximum(midline_labels, thinned_data.astype(np.uint8))
         
-        # Start a background thread for writing NRRD
-        write_thread = threading.Thread(target=write_nrrd_background, args=(output_path, midline_labels.astype(np.uint8), header))
-        write_thread.start()
+        # Write NRRD file
+        nrrd.write(output_path, midline_labels.astype(np.uint8), header)
         
-        return midline_labels, write_thread
+        return midline_labels
     except Exception as e:
         print(f"Error processing {nrrd_path}: {str(e)}")
-        return None, None
+        return None
+
+def process_single_file(args):
+    input_path, output_path, pad_amount, label_values, filter_labels, front, back, mask_out = args
+    start_time = time.time()
+    result = process_structures(input_path, output_path, pad_amount, label_values, filter_labels=filter_labels, front=front, back=back, mask_out=mask_out)
+    processing_time = time.time() - start_time
+    return input_path, result, processing_time
 
 def process_directory(input_directory, pad_amount=0, label_values=None, test_mode=False, replace=False, show_time=False, filter_labels=False, front=True, back=True, mask_out=True, use_relabeled=False):
     files_to_process = []
-    write_threads = []
     for root, _, files in os.walk(input_directory):
         mask_file_suffix = '_relabeled_mask.nrrd' if use_relabeled else '_mask.nrrd'
         mask_file = next((f for f in files if f.endswith(mask_file_suffix)), None)
@@ -112,27 +111,20 @@ def process_directory(input_directory, pad_amount=0, label_values=None, test_mod
             if os.path.exists(output_path) and not replace:
                 continue
             
-            files_to_process.append((input_path, output_path))
+            files_to_process.append((input_path, output_path, pad_amount, label_values, filter_labels, front, back, mask_out))
             
             if test_mode and len(files_to_process) >= 3:
                 break
 
-    for input_path, output_path in tqdm(files_to_process, desc="Processing files", unit="file"):
-        overall_start_time = time.time()
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        futures = [executor.submit(process_single_file, args) for args in files_to_process]
         
-        result, write_thread = process_structures(input_path, output_path, pad_amount, label_values, filter_labels=filter_labels, front=front, back=back, mask_out=mask_out)
-        
-        if result is None and show_time:
-            print(f"Error processing file: {os.path.basename(input_path)}")
-        elif show_time:
-            print(f"Time taken for file {os.path.basename(input_path)}: {time.time() - overall_start_time:.2f} seconds")
-        
-        if write_thread:
-            write_threads.append(write_thread)
-
-    # Wait for all write operations to complete
-    for thread in write_threads:
-        thread.join()
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(files_to_process), desc="Processing files", unit="file"):
+            input_path, result, processing_time = future.result()
+            if result is None and show_time:
+                print(f"Error processing file: {os.path.basename(input_path)}")
+            elif show_time:
+                print(f"Time taken for file {os.path.basename(input_path)}: {processing_time:.2f} seconds")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Process 3D instance volumes to midline volumes.')

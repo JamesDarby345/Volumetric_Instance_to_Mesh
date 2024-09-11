@@ -355,8 +355,8 @@ if __name__ == "__main__":
     input_directory = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um'
 
     parser = argparse.ArgumentParser(description="Process NRRD files to OBJ meshes.")
-    parser.add_argument("--vis", action="store_true", help="Visualize the meshes after creation.")
-    parser.add_argument("--test", action="store_true", help="Process only the first NRRD file found.")
+    parser.add_argument("--vis", action="store_true", help="Visualize the meshes after creation for testing.")
+    parser.add_argument("--test", action="store_true", help="Process only the first NRRD file found for testing.")
     parser.add_argument("--rcm", type=float, default=50, help="Reconnection multiplier for the surface.")
     parser.add_argument("--time", action="store_true", help="Print timing information")
     parser.add_argument("--nonormals", action="store_true", help="Disable normal fixing")
