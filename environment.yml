@@ -1,0 +1,17 @@
+name: vol_instance_to_mesh
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy<2
+  - scipy
+  - scikit-image
+  - scikit-learn
+  - trimesh
+  - tqdm
+  - matplotlib
+  - pyvista
+  - pynrrd
+  - numba
+  - graph-tool

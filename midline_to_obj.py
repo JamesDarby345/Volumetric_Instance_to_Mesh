@@ -7,6 +7,7 @@ import trimesh
 import pyvista as pv
 from scipy.spatial import cKDTree
 import multiprocessing
+import concurrent.futures
 import time
 import glob
 import argparse
@@ -328,9 +329,13 @@ def midline_labels_to_obj(input_nrrd_path, output_obj_path, array_values=None, m
     # Prepare arguments for multiprocessing
     args_list = [(value, original_array, output_obj_path, max_distance, min_vertices, visualise, space_origin, reconnection_mult, avg_pca_normal) for value in array_values]
     
-    # Use multiprocessing to process label values in parallel
+    # Use multiprocessing to process label values in parallel, 
+    # but we are already parallel across cube files, seems to make no positive or negative difference
     with multiprocessing.Pool() as pool:
         pool.map(process_single_value, args_list)
+
+    # for args in args_list:
+    #     process_single_value(args)
 
 def process_folder(input_folder, max_distance=1.5, min_vertices=500, visualise=False, test=False, reconnection_mult=3, should_print_timing=False, should_fix_normals=True, replace=False):
     # Find all *_mask_thinned.nrrd files in the input folder and its subfolders
@@ -345,8 +350,10 @@ def process_folder(input_folder, max_distance=1.5, min_vertices=500, visualise=F
     args_list = [(file, max_distance, min_vertices, visualise, test, reconnection_mult, should_print_timing, should_fix_normals, replace) for file in nrrd_files]
     
     # Use multiprocessing to process files in parallel
-    with multiprocessing.Pool() as pool:
-        list(tqdm(pool.imap(process_single_file, args_list), total=len(args_list), desc="Processing files"))
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        futures = [executor.submit(process_single_file, args) for args in args_list]
+        for _ in tqdm(concurrent.futures.as_completed(futures), total=len(args_list), desc="Processing files"):
+            pass
 
 
 
