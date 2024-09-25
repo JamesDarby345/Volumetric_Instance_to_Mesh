@@ -48,57 +48,6 @@ def calculate_average_pca_normal(original_array):
     pca.fit(indices)
     return pca.components_[2]  # The third component is normal to the main plane
 
-def fix_mesh_normals(tm_mesh, avg_pca_normal, should_print_timing):
-    start_time = time.time()
-    """
-    Fix mesh normals to point consistently towards the average PCA normal.
-    
-    Parameters:
-    tm_mesh (trimesh.Trimesh): The input mesh.
-    avg_pca_normal (numpy.ndarray): The average PCA normal vector.
-    
-    Returns:
-    trimesh.Trimesh: The mesh with fixed normals.
-    """
-    # Calculate the average normal of the mesh
-    avg_mesh_normal = np.mean(tm_mesh.face_normals, axis=0)
-    
-    # Check if the average mesh normal is pointing away from the PCA normal
-    if np.dot(avg_mesh_normal, avg_pca_normal) < 0:
-        tm_mesh.invert()
-    
-    end_time = time.time()
-    print_timing("fix_mesh_normals", end_time - start_time, should_print_timing)
-    return tm_mesh
-
-def pyvista_to_trimesh(pv_mesh, avg_pca_normal, should_print_timing, should_fix_normals=True):
-    """
-    Convert a PyVista mesh to a Trimesh object, preserving UV coordinates and fixing normals.
-    
-    Parameters:
-    pv_mesh (pyvista.PolyData): The input PyVista mesh.
-    avg_pca_normal (numpy.ndarray): The average PCA normal vector.
-    
-    Returns:
-    trimesh.Trimesh: The converted Trimesh object with fixed normals.
-    """
-    vertices = pv_mesh.points
-    faces = pv_mesh.faces.reshape(-1, 4)[:, 1:4]
-    
-    # Create the Trimesh object
-    tm_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    
-    # Add UV coordinates if they exist
-    if 'UV' in pv_mesh.point_data:
-        uv_coords = pv_mesh.point_data['UV']
-        tm_mesh.visual = trimesh.visual.TextureVisuals(uv=uv_coords)
-
-    if should_fix_normals:
-        # Fix normals across sheets using the average PCA normal
-        tm_mesh = fix_mesh_normals(tm_mesh, avg_pca_normal, should_print_timing)
-    
-    return tm_mesh
-
 def add_uv_mapping(mesh):
     """
     Add UV coordinates to the mesh using a simple planar projection.
@@ -123,37 +72,9 @@ def add_uv_mapping(mesh):
     # print("Added UV mapping to the mesh.")
     return mesh
 
-def filter_disconnected_parts(mesh, min_vertices):
-    """
-    Filter out disconnected parts of the mesh with fewer than min_vertices.
-    
-    Parameters:
-    mesh (pyvista.PolyData): The input mesh.
-    min_vertices (int): The minimum number of vertices a part should have to be kept.
-    
-    Returns:
-    pyvista.PolyData: The filtered mesh.
-    """
-    # Get connected regions
-    labeled = mesh.connectivity(largest=False)
-    
-    # Count vertices in each region
-    unique_labels, counts = np.unique(labeled.cell_data['RegionId'], return_counts=True)
-    
-    # Create a mask for regions to keep
-    keep_mask = np.isin(labeled.cell_data['RegionId'], unique_labels[counts >= min_vertices])
-    
-    # Extract the kept regions
-    filtered_mesh = labeled.extract_cells(keep_mask)
-    
-    # print(f"Filtered out {len(unique_labels) - np.sum(counts >= min_vertices)} disconnected parts")
-    # print(f"Remaining parts: {np.sum(counts >= min_vertices)}")
-    
-    return filtered_mesh
-
 def array_to_thin_sheet_obj(array, filename, max_distance=1.8, min_vertices=800, space_origin=None, reconnection_mult=3, avg_pca_normal=None, should_print_timing=False, should_fix_normals=True):
     """
-    Convert a 3D numpy array to a thin sheet-like mesh file, connecting only nearby voxels.
+    Convert a thinned 3D numpy array to a thin sheet-like mesh file, connecting only nearby voxels.
     
     Parameters:
     array (numpy.ndarray): 3D numpy array representing the structure.

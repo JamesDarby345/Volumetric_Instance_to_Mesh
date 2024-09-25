@@ -12,6 +12,8 @@ import numpy as np
 from tqdm import tqdm
 import argparse
 import scipy.spatial
+import pyvista as pv
+from midline_helper_simplified import *
 
 def find_obj_files(directory):
     obj_files = {}
@@ -232,6 +234,104 @@ def clip_adjacent_meshes(mesh1, mesh2, z_y_x_1, z_y_x_2, cube_size=256, threshol
 
     return clipped_mesh1, clipped_mesh2
 
+def clip_adjacent_meshes_pv(mesh1, mesh2, z_y_x_1, z_y_x_2, cube_size=256, threshold=5):
+    """
+    Clips two adjacent PyVista PolyData meshes near their adjacent plane, moving the threshold into each cube.
+
+    Args:
+        mesh1 (pyvista.PolyData): The first mesh.
+        mesh2 (pyvista.PolyData): The second mesh.
+        z_y_x_1 (str): Identifier for the first cube in 'z_y_x' format.
+        z_y_x_2 (str): Identifier for the second cube in 'z_y_x' format.
+        cube_size (int, optional): Size of each cube. Defaults to 256.
+        threshold (float, optional): Distance threshold for clipping. Defaults to 5.
+
+    Returns:
+        tuple: Two clipped pyvista.PolyData meshes.
+    """
+    coord1 = parse_z_y_x(z_y_x_1)
+    coord2 = parse_z_y_x(z_y_x_2)
+
+    if not are_adjacent(coord1, coord2, cube_size):
+        print(f"Cubes {z_y_x_1} and {z_y_x_2} are not adjacent.")
+        return mesh1, mesh2
+
+    diff = np.array(coord2) - np.array(coord1)
+    axis = np.argmax(np.abs(diff))
+    is_positive = diff[axis] > 0
+
+    plane_origin = np.array(coord1, dtype=float)
+    plane_normal = np.zeros(3)
+    plane_normal[axis] = 1 if is_positive else -1
+
+    if is_positive:
+        plane_origin[axis] += cube_size
+    else:
+        plane_origin[axis] -= cube_size
+
+    # Create two planes, one for each mesh, moved by the threshold
+    plane1 = pv.Plane(center=plane_origin - plane_normal * threshold, direction=plane_normal, i_size=cube_size*2, j_size=cube_size*2)
+    plane2 = pv.Plane(center=plane_origin + plane_normal * threshold, direction=plane_normal, i_size=cube_size*2, j_size=cube_size*2)
+
+    clipped_mesh1 = mesh1.clip_surface(plane1, invert=True)
+    clipped_mesh2 = mesh2.clip_surface(plane2, invert=False)
+
+    return clipped_mesh1, clipped_mesh2
+
+def extract_section_near_adjacent_plane(z_y_x_1, z_y_x_2, mesh, cube_size=256, threshold=5):
+    """
+    Extracts a section of the mesh within a threshold distance from the adjacent plane between two cubes.
+
+    Args:
+        z_y_x_1 (str): First cube coordinates in 'z_y_x' format.
+        z_y_x_2 (str): Second cube coordinates in 'z_y_x' format.
+        mesh (trimesh.Trimesh): The input mesh to extract the section from.
+        cube_size (int, optional): Size of each cube. Defaults to 256.
+        threshold (float, optional): Distance threshold for extraction. Defaults to 5.
+
+    Returns:
+        trimesh.Trimesh: The extracted and cleaned mesh section.
+    """
+    coord1 = parse_z_y_x(z_y_x_1)
+    coord2 = parse_z_y_x(z_y_x_2)
+
+    if not are_adjacent(coord1, coord2, cube_size):
+        print(f"Cubes {z_y_x_1} and {z_y_x_2} are not adjacent.")
+        return None
+
+    diff = np.array(coord2) - np.array(coord1)
+    axis = np.argmax(np.abs(diff))
+    is_positive = diff[axis] > 0
+
+    # Define the plane for extraction
+    plane_point = np.array(coord1, dtype=float)
+    if is_positive:
+        plane_point[axis] += cube_size
+    plane_normal = np.zeros(3)
+    plane_normal[axis] = 1 if is_positive else -1
+
+    # Calculate signed distances from all vertices to the plane
+    distances = np.dot(mesh.vertices - plane_point, plane_normal)
+
+    # Identify vertices within the threshold on both sides of the plane
+    mask = np.abs(distances) <= threshold
+    if not np.any(mask):
+        print("No vertices found within the threshold distance from the plane.")
+        return None
+
+    # Select faces where all vertices are within the threshold
+    selected_faces = mesh.faces[np.all(mask[mesh.faces], axis=1)]
+
+    if selected_faces.size == 0:
+        print("No faces found within the threshold distance from the plane.")
+        return None
+
+    # Create the new mesh with the selected faces
+    cleaned_mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=selected_faces)
+    cleaned_mesh.remove_unreferenced_vertices()
+
+    return cleaned_mesh
+
 def merge_adjacent_cubes(z_y_x_1, z_y_x_2, obj_files, output_directory, cube_size=256):
     coord1 = parse_z_y_x(z_y_x_1)
     coord2 = parse_z_y_x(z_y_x_2)
@@ -243,7 +343,6 @@ def merge_adjacent_cubes(z_y_x_1, z_y_x_2, obj_files, output_directory, cube_siz
     cube1_paths = obj_files[z_y_x_1]
     cube2_paths = obj_files[z_y_x_2]
     
-    merged_meshes = {}
     boundary_faces = {}
     
     for file1 in cube1_paths:
@@ -252,32 +351,71 @@ def merge_adjacent_cubes(z_y_x_1, z_y_x_2, obj_files, output_directory, cube_siz
             label2 = file2.split('_')[-1].split('.')[0]
             
             if label1 == label2:
+                clip_threshold = 5
                 mesh1 = trimesh.load_mesh(file1)
-                mesh2 = trimesh.load_mesh(file2)
-                merged_mesh = merge_adjacent_meshes(mesh1, mesh2) #boolean and merge...
-
+                mesh2 = trimesh.load_mesh(file2) 
                 mesh1.export(os.path.join(output_directory, f'{label1}_mesh1.obj'))
                 mesh2.export(os.path.join(output_directory, f'{label1}_mesh2.obj'))
+
+                pv_mesh1 = pv.read(file1)
+                pv_mesh2 = pv.read(file2)
+
+                pv_clipped_mesh_1, pv_clipped_mesh_2 = clip_adjacent_meshes_pv(pv_mesh1, pv_mesh2, z_y_x_1, z_y_x_2, cube_size=256, threshold=clip_threshold)
+                clipped_mesh_1 = pyvista_to_trimesh(pv_clipped_mesh_1, avg_pca_normal=None, should_print_timing=False, should_fix_normals=False)
+                clipped_mesh_2 = pyvista_to_trimesh(pv_clipped_mesh_2, avg_pca_normal=None, should_print_timing=False, should_fix_normals=False)
+                clipped_mesh_1.export(os.path.join(output_directory, f'{label1}_clipped_mesh1.obj'))
+                clipped_mesh_2.export(os.path.join(output_directory, f'{label1}_clipped_mesh2.obj'))
+                
+                # combined_mesh = pv.merge([pv_mesh1, pv_mesh2])
+                combined_mesh = pv.merge([pv_clipped_mesh_1, pv_clipped_mesh_2])
+
+                print(f"Data type of combined_mesh: {type(combined_mesh)}")
+
+                # Convert the combined mesh to a surface using Delaunay triangulation
+                surface = combined_mesh.delaunay_2d(alpha=2*clip_threshold)
+                surface = filter_disconnected_parts(surface, min_vertices=800)
+                if surface.n_points == 0:
+                    print("No points left after filtering, skipping mesh creation.")
+                    continue
+                surface = surface.delaunay_2d(alpha=8*clip_threshold)
+                # Fill holes in the surface mesh
+                surface = surface.fill_holes(hole_size=12*clip_threshold)
+                surface.compute_normals(auto_orient_normals=True, inplace=True)
+
+                #will need to calculate the average pca normal if we want to fix the normals
+                tm_mesh = pyvista_to_trimesh(surface, avg_pca_normal=None, should_print_timing=False, should_fix_normals=False)
+                tm_mesh.export(os.path.join(output_directory, f'{label1}_tm_mesh.obj'))
+
+                clipped_mesh_1, clipped_mesh_2 = clip_adjacent_meshes(mesh1, mesh2, z_y_x_1, z_y_x_2, cube_size=256, threshold=clip_threshold)
+                # clipped_mesh_1.export(os.path.join(output_directory, f'{label1}_clipped_mesh1.obj'))
+                # clipped_mesh_2.export(os.path.join(output_directory, f'{label1}_clipped_mesh2.obj'))
+
+                merged_mesh = merge_adjacent_meshes(clipped_mesh_1, clipped_mesh_2) #boolean and merge...
                 merged_mesh.export(os.path.join(output_directory, f'{label1}_merged.obj'))
 
                 delaunay = scipy.spatial.Delaunay(merged_mesh.vertices[:, :2])
                 delaunay_faces = delaunay.simplices
                 delaunay_mesh = trimesh.Trimesh(vertices=merged_mesh.vertices, faces=delaunay_faces)
-                delaunay_mesh.export(os.path.join(output_directory, f'{label1}_delaunay.obj')) #very spikey results and messes up other parts of the mesh
+                delaunay_mesh.export(os.path.join(output_directory, f'{label1}_delaunay.obj')) #very spikey results and messes up other parts of the mesh, but good near the boundary
 
-                clipped_mesh_1, clipped_mesh_2 = clip_adjacent_meshes(mesh1, mesh2, z_y_x_1, z_y_x_2, cube_size=256, threshold=5)
-                clipped_mesh_1.export(os.path.join(output_directory, f'{label1}_clipped_mesh1.obj'))
-                clipped_mesh_2.export(os.path.join(output_directory, f'{label1}_clipped_mesh2.obj'))
+                section_mesh = extract_section_near_adjacent_plane(z_y_x_1, z_y_x_2, delaunay_mesh, threshold=clip_threshold+5) #TODO if this threshold value is too small, it misses some of the mesh...
+                section_mesh.export(os.path.join(output_directory, f'{label1}_middle_section.obj'))
 
-                boundary_mesh_1 = get_sheet_boundary(mesh1)
-                boundary_mesh_2 = get_sheet_boundary(mesh2)
-                boundary_mesh_1, boundary_mesh_2 = get_adjacent_boundary_faces(boundary_mesh_1, boundary_mesh_2, z_y_x_1, z_y_x_2, cube_size=256, threshold=2)
+                middle_section_merged_mesh = merge_adjacent_meshes(section_mesh, merged_mesh)
+                middle_section_merged_mesh.export(os.path.join(output_directory, f'{label1}_middle_section_merged.obj'))
+
+                # Calculate boundary meshes from the clipped meshes
+                boundary_mesh_1 = get_sheet_boundary(clipped_mesh_1)
+                boundary_mesh_2 = get_sheet_boundary(clipped_mesh_2)
+                boundary_mesh_1, boundary_mesh_2 = get_adjacent_boundary_faces(boundary_mesh_1, boundary_mesh_2, z_y_x_1, z_y_x_2, cube_size=256, threshold=clip_threshold+2)
                 # Save the boundary meshes
                 boundary_mesh_1_path = os.path.join(output_directory, f'{label1}_boundary_1.obj')
                 boundary_mesh_2_path = os.path.join(output_directory, f'{label1}_boundary_2.obj')
                 boundary_mesh_1.export(boundary_mesh_1_path)
                 boundary_mesh_2.export(boundary_mesh_2_path)
                 print(f"Boundary meshes saved to: {boundary_mesh_1_path} and {boundary_mesh_2_path}")
+
+                
 
                 # Merge the two boundary meshes using Delaunay triangulation
                 combined_vertices = np.vstack((boundary_mesh_1.vertices, boundary_mesh_2.vertices))
@@ -295,18 +433,6 @@ def merge_adjacent_cubes(z_y_x_1, z_y_x_2, obj_files, output_directory, cube_siz
                 merged_boundary_mesh_path = os.path.join(output_directory, f'{label1}_merged_boundary.obj')
                 merged_boundary_mesh.export(merged_boundary_mesh_path) #creates faces that are too large and doesnt merge the meshes together well
                 print(f"Merged boundary mesh saved to: {merged_boundary_mesh_path}")
-
-                # Merge the merged_mesh and the merged_boundary_mesh
-                final_combined_vertices = np.vstack((merged_mesh.vertices, merged_boundary_mesh.vertices))
-                final_combined_faces = np.vstack((merged_mesh.faces, merged_boundary_mesh.faces + len(merged_mesh.vertices)))
-
-                # Create the final merged mesh
-                final_merged_mesh = trimesh.Trimesh(vertices=final_combined_vertices, faces=final_combined_faces)
-
-                # Save the final merged mesh
-                final_merged_mesh_path = os.path.join(output_directory, f'{label1}_final_merged.obj')
-                final_merged_mesh.export(final_merged_mesh_path)
-                print(f"Final merged mesh saved to: {final_merged_mesh_path}")
     
     return boundary_faces
 
