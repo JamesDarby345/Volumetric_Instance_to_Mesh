@@ -26,6 +26,8 @@ with low probability.
 def process_single_label(label_data, label_value, front=True, back=True, mask_out=True):
     mask = (label_data == label_value)
     result = front_back_avg_of_structure(mask, front, back)
+
+    # removes fb_average values that arent part of the structure, resulting in cleaner midlines in some cases
     if mask_out:
         result[mask != 1] = 0
     return result
@@ -136,6 +138,7 @@ if __name__ == '__main__':
     parser.add_argument('--back', action='store_true', help='Use back of structure')
     parser.add_argument('--input-dir', type=str, help='Input directory path')
     parser.add_argument('--relabeled', action='store_true', help='Process _relabeled_mask.nrrd files instead of _mask.nrrd')
+    parser.add_argument('--no-mask-out', action='store_true', help='Do not mask out values that arent part of the structure')
     args = parser.parse_args()
 
     # If neither front nor back is specified, use both and average
@@ -149,7 +152,7 @@ if __name__ == '__main__':
     overall_start_time = time.time()
     process_directory(input_directory, pad_amount=0, label_values=label_values, test_mode=args.test, 
                       replace=args.replace, show_time=args.time, filter_labels=args.filter_labels, 
-                      front=args.front, back=args.back, mask_out=True, use_relabeled=args.relabeled)
+                      front=args.front, back=args.back, mask_out=not args.no_mask_out, use_relabeled=args.relabeled)
     
     if args.time:
         print(f"Total execution time: {time.time() - overall_start_time:.2f} seconds")

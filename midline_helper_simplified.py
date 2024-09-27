@@ -5,6 +5,11 @@ from sklearn.decomposition import PCA
 import numba
 import time
 import trimesh
+import pyvista as pv
+
+def print_timing(message, elapsed_time, should_print):
+    if should_print:
+        print(f"{message}: {elapsed_time:.4f} seconds")
 
 def fix_mesh_normals(tm_mesh, avg_pca_normal, should_print_timing):
     start_time = time.time()
@@ -40,24 +45,29 @@ def pyvista_to_trimesh(pv_mesh, avg_pca_normal, should_print_timing, should_fix_
     Returns:
     trimesh.Trimesh: The converted Trimesh object with fixed normals.
     """
-    vertices = pv_mesh.points
-    faces = pv_mesh.faces.reshape(-1, 4)[:, 1:4]
-    
-    # Create the Trimesh object
-    tm_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    
-    # Add UV coordinates if they exist
-    if 'UV' in pv_mesh.point_data:
-        uv_coords = pv_mesh.point_data['UV']
-        tm_mesh.visual = trimesh.visual.TextureVisuals(uv=uv_coords)
+    try:
+        pv_mesh.compute_normals(auto_orient_normals=True, flip_normals=False, inplace=True)
+    except:
+        print("Error computing normals, skipping normal fixing")
+    finally:
+        vertices = pv_mesh.points
+        faces = pv_mesh.faces.reshape(-1, 4)[:, 1:4]
+        
+        # Create the Trimesh object
+        tm_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+        
+        # Add UV coordinates if they exist
+        if 'UV' in pv_mesh.point_data:
+            uv_coords = pv_mesh.point_data['UV']
+            tm_mesh.visual = trimesh.visual.TextureVisuals(uv=uv_coords)
 
-    if should_fix_normals:
-        # Fix normals across sheets using the average PCA normal
-        tm_mesh = fix_mesh_normals(tm_mesh, avg_pca_normal, should_print_timing)
-    
-    return tm_mesh
+        if should_fix_normals:
+            # Fix normals across sheets using the average PCA normal
+            tm_mesh = fix_mesh_normals(tm_mesh, avg_pca_normal, should_print_timing)
+        
+        return tm_mesh
 
-def filter_disconnected_parts(mesh, min_vertices):
+def filter_disconnected_parts(mesh, min_vertices=800):
     """
     Filter out disconnected parts of the mesh with fewer than min_vertices.
     
@@ -69,7 +79,12 @@ def filter_disconnected_parts(mesh, min_vertices):
     pyvista.PolyData: The filtered mesh.
     """
     # Get connected regions
-    labeled = mesh.connectivity(largest=False)
+    labeled = mesh.connectivity(extraction_mode='all', label_regions=True)
+
+    # Check if 'RegionId' exists in cell data
+    if 'RegionId' not in labeled.cell_data:
+        # print("Warning: 'RegionId' not found in cell data. Probably only one connected region. Skipping filtering.")
+        return mesh
     
     # Count vertices in each region
     unique_labels, counts = np.unique(labeled.cell_data['RegionId'], return_counts=True)

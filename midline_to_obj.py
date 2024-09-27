@@ -15,10 +15,6 @@ from sklearn.decomposition import PCA
 from midline_helper_simplified import *
 import re
 
-def print_timing(message, elapsed_time, should_print):
-    if should_print:
-        print(f"{message}: {elapsed_time:.4f} seconds")
-
 def visualize_mesh(mesh):
     """
     Visualize the mesh using PyVista.
@@ -147,22 +143,24 @@ def array_to_thin_sheet_obj(array, filename, max_distance=1.8, min_vertices=800,
     tm_mesh = pyvista_to_trimesh(surf, avg_pca_normal, should_print_timing, should_fix_normals=should_fix_normals)  # We don't need to fix normals in pyvista_to_trimesh anymore
     trimesh_end = time.time()
     print_timing("pyvista_to_trimesh", trimesh_end - trimesh_start, should_print_timing)
+
+    tm_mesh.export(filename)
     
     # Save as OBJ
-    with open(filename, 'w') as f:
-        f.write("# OBJ file\n")
-        for v in tm_mesh.vertices:
-            f.write(f"v {v[0]} {v[1]} {v[2]}\n")
+    # with open(filename, 'w') as f:
+    #     f.write("# OBJ file\n")
+    #     for v in tm_mesh.vertices:
+    #         f.write(f"v {v[0]} {v[1]} {v[2]}\n")
         
-        if tm_mesh.visual.uv is not None:
-            for uv in tm_mesh.visual.uv:
-                f.write(f"vt {uv[0]} {uv[1]}\n")
+    #     if tm_mesh.visual.uv is not None:
+    #         for uv in tm_mesh.visual.uv:
+    #             f.write(f"vt {uv[0]} {uv[1]}\n")
             
-            for face in tm_mesh.faces:
-                f.write(f"f {face[0]+1}/{face[0]+1} {face[1]+1}/{face[1]+1} {face[2]+1}/{face[2]+1}\n")
-        else:
-            for face in tm_mesh.faces:
-                f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+    #         for face in tm_mesh.faces:
+    #             f.write(f"f {face[0]+1}/{face[0]+1} {face[1]+1}/{face[1]+1} {face[2]+1}/{face[2]+1}\n")
+    #     else:
+    #         for face in tm_mesh.faces:
+    #             f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
     
     # print(f"OBJ file '{filename}' has been created.")
     
@@ -229,6 +227,7 @@ def process_single_file(args):
         mesh = array_to_thin_sheet_obj(array, temp_output_obj_path, max_distance=max_distance, min_vertices=min_vertices, space_origin=space_origin, reconnection_mult=reconnection_mult, avg_pca_normal=avg_pca_normal, should_print_timing=should_print_timing, should_fix_normals=should_fix_normals)
         if visualise:
             visualize_mesh(mesh)
+        # mesh.export(temp_output_obj_path)
     end_time = time.time()
     print_timing(f"Processing file {input_nrrd_path}", end_time - start_time, should_print_timing)
 
@@ -283,6 +282,7 @@ if __name__ == "__main__":
     input_directory = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um'
 
     parser = argparse.ArgumentParser(description="Process NRRD files to OBJ meshes.")
+    parser.add_argument("--input-path", type=str, help="Path to the directory containing the midline nrrd files")
     parser.add_argument("--vis", action="store_true", help="Visualize the meshes after creation for testing.")
     parser.add_argument("--test", action="store_true", help="Process only the first NRRD file found for testing.")
     parser.add_argument("--rcm", type=float, default=50, help="Reconnection multiplier for the surface.")
@@ -298,6 +298,9 @@ if __name__ == "__main__":
     
     stime = time.time()
     reconnection_mult = args.rcm
+
+    if args.input_path:
+        input_directory = args.input_path
     
     if args.test:
         #temp testing
