@@ -563,18 +563,20 @@ def naive_merge_and_clean(output_directory, values=None):
                 point_merging=True,
                 inplace=True
             )
+
             print(merged_mesh.n_points)
            
             point_cloud = merged_mesh.points
 
             pv_point_cloud_polydata = pv.PolyData(point_cloud)
+            pv_point_cloud_polydata.plot(point_size=10)
 
             
             # Create a KDTree for efficient nearest neighbor search
             kdtree = cKDTree(point_cloud)
 
             # Define a radius for the neighborhood
-            radius = 100.0  # Adjust this value based on your data
+            radius = 50.0  # Adjust this value based on your data
 
             # sparse seed points that cover every point in the point cloud
             # Initialize uncovered point indices
@@ -590,7 +592,7 @@ def naive_merge_and_clean(output_directory, values=None):
                 seed_point_indices.append(current_index)
 
                 # Find all points within the radius of the current point
-                indices_within_radius = kdtree.query_ball_point(point_cloud[current_index], r=radius/1.1)
+                indices_within_radius = kdtree.query_ball_point(point_cloud[current_index], r=radius/1.05)
 
                 # Remove these points from the uncovered set
                 uncovered_indices.difference_update(indices_within_radius)
@@ -598,7 +600,7 @@ def naive_merge_and_clean(output_directory, values=None):
                 print(f"Seed points selected: {len(seed_point_indices)}, Uncovered points remaining: {len(uncovered_indices)}", end='\r')
 
             # Extract seed points
-            seed_points = point_cloud[seed_point_indices]
+            # seed_points = point_cloud[seed_point_indices]
 
             local_meshes = []
 
@@ -631,7 +633,10 @@ def naive_merge_and_clean(output_directory, values=None):
                     merged_mesh = merged_mesh.merge(mesh)
                 # Clean the merged mesh
                 merged_mesh = merged_mesh.clean(tolerance=1e-5)
-                # merged_mesh.compute_normals(auto_orient_normals=False, non_manifold_traversal=False, inplace=True)
+                # Smooth the mesh using Laplacian smoothing
+                # merged_mesh = merged_mesh.smooth(n_iter=1000, relaxation_factor=0.5, feature_angle=170, feature_smoothing=True, boundary_smoothing=True)
+                
+                merged_mesh.compute_normals(auto_orient_normals=False, inplace=True)
                 # Visualize the merged mesh
                 merged_mesh.plot(color='lightblue', show_edges=True)
 

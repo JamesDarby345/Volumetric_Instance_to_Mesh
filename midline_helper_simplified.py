@@ -141,42 +141,6 @@ def create_slicer_nrrd_header(data, z=0, y=0, x=0, encoding='gzip'):
 
     return header
 
-def front_back_avg_of_structure(arr, front=True, back=True):
-    # Get the dimensions of the input array
-    x_dim, y_dim, z_dim = arr.shape
-    
-    # Create an output array of the same dimensions, filled with zeros
-    output = np.zeros_like(arr)
-    
-    # Iterate through each x,y line
-    for x in range(x_dim):
-        for y in range(y_dim):
-            # Get the current line
-            line = arr[x, y, :]
-            
-            # Find non-zero indices
-            non_zero_indices = np.nonzero(line)[0]
-            
-            # If there are non-zero elements in the line
-            if len(non_zero_indices) > 0:
-                first_non_zero = non_zero_indices[0]
-                last_non_zero = non_zero_indices[-1]
-                
-                if front and back:
-                    # Calculate the average index
-                    index = int((first_non_zero + last_non_zero) / 2)
-                elif front:
-                    index = first_non_zero
-                elif back:
-                    index = last_non_zero
-                else:
-                    continue
-                
-                # Set the chosen position to 1 in the output array
-                output[x, y, index] = 1
-    
-    return output
-
 
 def dist_map_max(distance_map):
     """

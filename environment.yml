@@ -16,3 +16,6 @@ dependencies:
   - numba
   - graph-tool
   - open3d
+  - pyopencl
+  - pip:
+    - fastmorph
