@@ -11,11 +11,6 @@ from scipy.ndimage import binary_erosion
 
 import fastmorph
 
-import torch
-import torch.nn.functional as F
-import pyopencl as cl
-
-
 """
 Fastest midline calculation method.
 Front and back of the instance volume are averaged to create a midline volume.
@@ -57,128 +52,6 @@ def numba_dilation_3d_labels(data, iterations):
                         
     return result
 
-def torch_dilation_3d(arr, iterations):
-    # Ensure the input is a PyTorch tensor
-    print(arr.shape)
-    arr = torch.tensor(arr)
-
-    # Reshape the array to match the expected input dimensions: [N, C, D, H, W]
-    arr = arr.unsqueeze(0).unsqueeze(0)  # Shape becomes [1, 1, D, H, W]
-
-    # Select the appropriate device (GPU if available)
-    if torch.cuda.is_available():
-        device = torch.device('cuda')
-    elif torch.backends.mps.is_available():
-        device = torch.device('mps')
-    else:
-        device = torch.device('cpu')
-    arr = arr.to(device, dtype=torch.float32)  # Move to device and ensure float type
-
-    # Perform dilation iteratively
-    for _ in range(iterations):
-        arr = F.max_pool3d(arr, kernel_size=3, stride=1, padding=1)
-
-    # Remove the added dimensions and move the result back to the CPU
-    arr = arr.squeeze(0).squeeze(0).cpu().numpy()
-    print(arr.shape)
-
-    return arr
-
-def pyopencl_dilation_3d(arr, iters):
-    # Ensure the input is a NumPy array with float32 data type
-    arr = np.array(arr, dtype=np.float32)
-
-    # Get the dimensions of the input array
-    depth, height, width = arr.shape
-
-    # Set up the OpenCL context and command queue
-    platforms = cl.get_platforms()
-    if not platforms:
-        raise RuntimeError("No OpenCL platforms found.")
-    devices = platforms[0].get_devices()
-    if not devices:
-        raise RuntimeError("No OpenCL devices found.")
-    context = cl.Context(devices)
-    queue = cl.CommandQueue(context)
-
-    # Create OpenCL buffers
-    mf = cl.mem_flags
-    input_buf = cl.Buffer(context, mf.READ_WRITE | mf.COPY_HOST_PTR, hostbuf=arr)
-    output_buf = cl.Buffer(context, mf.READ_WRITE, size=arr.nbytes)
-
-    # Define the OpenCL kernel
-    kernel_code = """
-    __kernel void dilation3d(
-        __global const float *input,
-        __global float *output,
-        const int depth,
-        const int height,
-        const int width)
-    {
-        int x = get_global_id(2);
-        int y = get_global_id(1);
-        int z = get_global_id(0);
-
-        if (x >= width || y >= height || z >= depth)
-            return;
-
-        int idx = z * height * width + y * width + x;
-
-        float max_val = -FLT_MAX;
-
-        // Iterate over the 3x3x3 neighborhood
-        for (int dz = -1; dz <= 1; dz++) {
-            int nz = z + dz;
-            if (nz < 0 || nz >= depth) continue;
-            for (int dy = -1; dy <= 1; dy++) {
-                int ny = y + dy;
-                if (ny < 0 || ny >= height) continue;
-                for (int dx = -1; dx <= 1; dx++) {
-                    int nx = x + dx;
-                    if (nx < 0 || nx >= width) continue;
-                    int n_idx = nz * height * width + ny * width + nx;
-                    float val = input[n_idx];
-                    if (val > max_val) {
-                        max_val = val;
-                    }
-                }
-            }
-        }
-        output[idx] = max_val;
-    }
-    """
-
-    # Build the kernel
-    program = cl.Program(context, kernel_code).build()
-
-    # Prepare kernel arguments
-    dilation_kernel = program.dilation3d
-
-    # Define the global work size
-    global_work_size = (depth, height, width)
-
-    # Perform dilation iteratively
-    for _ in range(iters):
-        # Set kernel arguments
-        dilation_kernel.set_args(input_buf, output_buf,
-                                 np.int32(depth), np.int32(height), np.int32(width))
-
-        # Execute the kernel
-        cl.enqueue_nd_range_kernel(queue, dilation_kernel, global_work_size, None)
-
-        # Wait for the kernel to finish
-        queue.finish()
-
-        # Swap buffers for the next iteration
-        input_buf, output_buf = output_buf, input_buf
-
-    # Read the result back to host memory
-    result = np.empty_like(arr)
-    cl.enqueue_copy(queue, result, input_buf)
-    queue.finish()
-
-    return result
-
 def morphological_tunnel_filling(arr, label_val, radius=10):
     arr = (arr > 0).astype(bool)
     arr = np.pad(arr, pad_width=radius, mode='constant', constant_values=0)
@@ -188,7 +61,6 @@ def morphological_tunnel_filling(arr, label_val, radius=10):
         arr = fastmorph.spherical_erode(arr, radius=radius, parallel=1, in_place=True)
     else:
         arr = numba_dilation_3d_labels(arr, iterations=radius)
-        # arr = pyopencl_dilation_3d(arr, iters=radius)
         arr = binary_erosion(arr, iterations=radius)
 
     arr = arr[radius:-radius, radius:-radius, radius:-radius]
@@ -378,7 +250,7 @@ if __name__ == '__main__':
     parser.add_argument('--input-dir', type=str, help='Input directory path')
     parser.add_argument('--relabeled', action='store_true', help='Process _relabeled_mask.nrrd files instead of _mask.nrrd')
     parser.add_argument('--no-mask-out', action='store_true', help='Do not mask out values that arent part of the structure')
-    parser.add_argument('--morph', type=int, default=0, help='Use morphological dilation and erosion to close holes with provided radius')
+    parser.add_argument('--morph', type=int, default=0, help='Use morphological dilation and erosion to close holes with provided radius, recomend 10, takes ~2x longer')
     args = parser.parse_args()
 
     # If neither front nor back is specified, use both and average
