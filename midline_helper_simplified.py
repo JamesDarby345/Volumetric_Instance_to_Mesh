@@ -3,6 +3,102 @@ from scipy import ndimage
 import graph_tool.all as gt
 from sklearn.decomposition import PCA
 import numba
+import time
+import trimesh
+import pyvista as pv
+
+def print_timing(message, elapsed_time, should_print):
+    if should_print:
+        print(f"{message}: {elapsed_time:.4f} seconds")
+
+def fix_mesh_normals(tm_mesh, avg_pca_normal, should_print_timing):
+    start_time = time.time()
+    """
+    Fix mesh normals to point consistently towards the average PCA normal.
+    
+    Parameters:
+    tm_mesh (trimesh.Trimesh): The input mesh.
+    avg_pca_normal (numpy.ndarray): The average PCA normal vector.
+    
+    Returns:
+    trimesh.Trimesh: The mesh with fixed normals.
+    """
+    # Calculate the average normal of the mesh
+    avg_mesh_normal = np.mean(tm_mesh.face_normals, axis=0)
+    
+    # Check if the average mesh normal is pointing away from the PCA normal
+    if np.dot(avg_mesh_normal, avg_pca_normal) < 0:
+        tm_mesh.invert()
+    
+    end_time = time.time()
+    print_timing("fix_mesh_normals", end_time - start_time, should_print_timing)
+    return tm_mesh
+
+def pyvista_to_trimesh(pv_mesh, avg_pca_normal, should_print_timing, should_fix_normals=True):
+    """
+    Convert a PyVista mesh to a Trimesh object, preserving UV coordinates and fixing normals.
+    
+    Parameters:
+    pv_mesh (pyvista.PolyData): The input PyVista mesh.
+    avg_pca_normal (numpy.ndarray): The average PCA normal vector.
+    
+    Returns:
+    trimesh.Trimesh: The converted Trimesh object with fixed normals.
+    """
+    try:
+        pv_mesh.compute_normals(auto_orient_normals=True, flip_normals=False, inplace=True)
+    except:
+        print("Error computing normals, skipping normal fixing")
+    finally:
+        vertices = pv_mesh.points
+        faces = pv_mesh.faces.reshape(-1, 4)[:, 1:4]
+        
+        # Create the Trimesh object
+        tm_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+        
+        # Add UV coordinates if they exist
+        if 'UV' in pv_mesh.point_data:
+            uv_coords = pv_mesh.point_data['UV']
+            tm_mesh.visual = trimesh.visual.TextureVisuals(uv=uv_coords)
+
+        if should_fix_normals:
+            # Fix normals across sheets using the average PCA normal
+            tm_mesh = fix_mesh_normals(tm_mesh, avg_pca_normal, should_print_timing)
+        
+        return tm_mesh
+
+def filter_disconnected_parts(mesh, min_vertices=800):
+    """
+    Filter out disconnected parts of the mesh with fewer than min_vertices.
+    
+    Parameters:
+    mesh (pyvista.PolyData): The input mesh.
+    min_vertices (int): The minimum number of vertices a part should have to be kept.
+    
+    Returns:
+    pyvista.PolyData: The filtered mesh.
+    """
+    # Get connected regions
+    labeled = mesh.connectivity(extraction_mode='all', label_regions=True)
+
+    # Check if 'RegionId' exists in cell data
+    if 'RegionId' not in labeled.cell_data:
+        # print("Warning: 'RegionId' not found in cell data. Probably only one connected region. Skipping filtering.")
+        return mesh
+    
+    # Count vertices in each region
+    unique_labels, counts = np.unique(labeled.cell_data['RegionId'], return_counts=True)
+    
+    # Create a mask for regions to keep
+    keep_mask = np.isin(labeled.cell_data['RegionId'], unique_labels[counts >= min_vertices])
+    
+    # Extract the kept regions
+    filtered_mesh = labeled.extract_cells(keep_mask)
+    
+    # print(f"Filtered out {len(unique_labels) - np.sum(counts >= min_vertices)} disconnected parts")
+    # print(f"Remaining parts: {np.sum(counts >= min_vertices)}")
+    
+    return filtered_mesh
 
 def create_slicer_nrrd_header(data, z=0, y=0, x=0, encoding='gzip'):
     unique_values = np.unique(data)
@@ -44,42 +140,6 @@ def create_slicer_nrrd_header(data, z=0, y=0, x=0, encoding='gzip'):
             print(f"Warning: No color defined for label value {value}")
 
     return header
-
-def front_back_avg_of_structure(arr, front=True, back=True):
-    # Get the dimensions of the input array
-    x_dim, y_dim, z_dim = arr.shape
-    
-    # Create an output array of the same dimensions, filled with zeros
-    output = np.zeros_like(arr)
-    
-    # Iterate through each x,y line
-    for x in range(x_dim):
-        for y in range(y_dim):
-            # Get the current line
-            line = arr[x, y, :]
-            
-            # Find non-zero indices
-            non_zero_indices = np.nonzero(line)[0]
-            
-            # If there are non-zero elements in the line
-            if len(non_zero_indices) > 0:
-                first_non_zero = non_zero_indices[0]
-                last_non_zero = non_zero_indices[-1]
-                
-                if front and back:
-                    # Calculate the average index
-                    index = int((first_non_zero + last_non_zero) / 2)
-                elif front:
-                    index = first_non_zero
-                elif back:
-                    index = last_non_zero
-                else:
-                    continue
-                
-                # Set the chosen position to 1 in the output array
-                output[x, y, index] = 1
-    
-    return output
 
 
 def dist_map_max(distance_map):

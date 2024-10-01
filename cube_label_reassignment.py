@@ -415,4 +415,5 @@ if __name__ == '__main__':
 
     label_groups = group_labels(mask_files, args.cube_size, half_winding_plane=half_winding_plane)
     label_group_mapping = create_label_group_mapping(label_groups, mask_files)
+    print(f"Number of label groups: {len(label_groups)}")
     relabel_cubes(label_group_mapping, mask_files, output_folder=output_directory, overwrite=args.overwrite)

@@ -8,3 +8,4 @@ matplotlib
 pyvista
 pynrrd
 numba
+fastmorph

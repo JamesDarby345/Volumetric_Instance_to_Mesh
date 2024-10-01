@@ -15,10 +15,6 @@ from sklearn.decomposition import PCA
 from midline_helper_simplified import *
 import re
 
-def print_timing(message, elapsed_time, should_print):
-    if should_print:
-        print(f"{message}: {elapsed_time:.4f} seconds")
-
 def visualize_mesh(mesh):
     """
     Visualize the mesh using PyVista.
@@ -48,57 +44,6 @@ def calculate_average_pca_normal(original_array):
     pca.fit(indices)
     return pca.components_[2]  # The third component is normal to the main plane
 
-def fix_mesh_normals(tm_mesh, avg_pca_normal, should_print_timing):
-    start_time = time.time()
-    """
-    Fix mesh normals to point consistently towards the average PCA normal.
-    
-    Parameters:
-    tm_mesh (trimesh.Trimesh): The input mesh.
-    avg_pca_normal (numpy.ndarray): The average PCA normal vector.
-    
-    Returns:
-    trimesh.Trimesh: The mesh with fixed normals.
-    """
-    # Calculate the average normal of the mesh
-    avg_mesh_normal = np.mean(tm_mesh.face_normals, axis=0)
-    
-    # Check if the average mesh normal is pointing away from the PCA normal
-    if np.dot(avg_mesh_normal, avg_pca_normal) < 0:
-        tm_mesh.invert()
-    
-    end_time = time.time()
-    print_timing("fix_mesh_normals", end_time - start_time, should_print_timing)
-    return tm_mesh
-
-def pyvista_to_trimesh(pv_mesh, avg_pca_normal, should_print_timing, should_fix_normals=True):
-    """
-    Convert a PyVista mesh to a Trimesh object, preserving UV coordinates and fixing normals.
-    
-    Parameters:
-    pv_mesh (pyvista.PolyData): The input PyVista mesh.
-    avg_pca_normal (numpy.ndarray): The average PCA normal vector.
-    
-    Returns:
-    trimesh.Trimesh: The converted Trimesh object with fixed normals.
-    """
-    vertices = pv_mesh.points
-    faces = pv_mesh.faces.reshape(-1, 4)[:, 1:4]
-    
-    # Create the Trimesh object
-    tm_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    
-    # Add UV coordinates if they exist
-    if 'UV' in pv_mesh.point_data:
-        uv_coords = pv_mesh.point_data['UV']
-        tm_mesh.visual = trimesh.visual.TextureVisuals(uv=uv_coords)
-
-    if should_fix_normals:
-        # Fix normals across sheets using the average PCA normal
-        tm_mesh = fix_mesh_normals(tm_mesh, avg_pca_normal, should_print_timing)
-    
-    return tm_mesh
-
 def add_uv_mapping(mesh):
     """
     Add UV coordinates to the mesh using a simple planar projection.
@@ -123,37 +68,9 @@ def add_uv_mapping(mesh):
     # print("Added UV mapping to the mesh.")
     return mesh
 
-def filter_disconnected_parts(mesh, min_vertices):
-    """
-    Filter out disconnected parts of the mesh with fewer than min_vertices.
-    
-    Parameters:
-    mesh (pyvista.PolyData): The input mesh.
-    min_vertices (int): The minimum number of vertices a part should have to be kept.
-    
-    Returns:
-    pyvista.PolyData: The filtered mesh.
-    """
-    # Get connected regions
-    labeled = mesh.connectivity(largest=False)
-    
-    # Count vertices in each region
-    unique_labels, counts = np.unique(labeled.cell_data['RegionId'], return_counts=True)
-    
-    # Create a mask for regions to keep
-    keep_mask = np.isin(labeled.cell_data['RegionId'], unique_labels[counts >= min_vertices])
-    
-    # Extract the kept regions
-    filtered_mesh = labeled.extract_cells(keep_mask)
-    
-    # print(f"Filtered out {len(unique_labels) - np.sum(counts >= min_vertices)} disconnected parts")
-    # print(f"Remaining parts: {np.sum(counts >= min_vertices)}")
-    
-    return filtered_mesh
-
 def array_to_thin_sheet_obj(array, filename, max_distance=1.8, min_vertices=800, space_origin=None, reconnection_mult=3, avg_pca_normal=None, should_print_timing=False, should_fix_normals=True):
     """
-    Convert a 3D numpy array to a thin sheet-like mesh file, connecting only nearby voxels.
+    Convert a thinned 3D numpy array to a thin sheet-like mesh file, connecting only nearby voxels.
     
     Parameters:
     array (numpy.ndarray): 3D numpy array representing the structure.
@@ -226,22 +143,24 @@ def array_to_thin_sheet_obj(array, filename, max_distance=1.8, min_vertices=800,
     tm_mesh = pyvista_to_trimesh(surf, avg_pca_normal, should_print_timing, should_fix_normals=should_fix_normals)  # We don't need to fix normals in pyvista_to_trimesh anymore
     trimesh_end = time.time()
     print_timing("pyvista_to_trimesh", trimesh_end - trimesh_start, should_print_timing)
+
+    tm_mesh.export(filename)
     
     # Save as OBJ
-    with open(filename, 'w') as f:
-        f.write("# OBJ file\n")
-        for v in tm_mesh.vertices:
-            f.write(f"v {v[0]} {v[1]} {v[2]}\n")
+    # with open(filename, 'w') as f:
+    #     f.write("# OBJ file\n")
+    #     for v in tm_mesh.vertices:
+    #         f.write(f"v {v[0]} {v[1]} {v[2]}\n")
         
-        if tm_mesh.visual.uv is not None:
-            for uv in tm_mesh.visual.uv:
-                f.write(f"vt {uv[0]} {uv[1]}\n")
+    #     if tm_mesh.visual.uv is not None:
+    #         for uv in tm_mesh.visual.uv:
+    #             f.write(f"vt {uv[0]} {uv[1]}\n")
             
-            for face in tm_mesh.faces:
-                f.write(f"f {face[0]+1}/{face[0]+1} {face[1]+1}/{face[1]+1} {face[2]+1}/{face[2]+1}\n")
-        else:
-            for face in tm_mesh.faces:
-                f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+    #         for face in tm_mesh.faces:
+    #             f.write(f"f {face[0]+1}/{face[0]+1} {face[1]+1}/{face[1]+1} {face[2]+1}/{face[2]+1}\n")
+    #     else:
+    #         for face in tm_mesh.faces:
+    #             f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
     
     # print(f"OBJ file '{filename}' has been created.")
     
@@ -308,6 +227,7 @@ def process_single_file(args):
         mesh = array_to_thin_sheet_obj(array, temp_output_obj_path, max_distance=max_distance, min_vertices=min_vertices, space_origin=space_origin, reconnection_mult=reconnection_mult, avg_pca_normal=avg_pca_normal, should_print_timing=should_print_timing, should_fix_normals=should_fix_normals)
         if visualise:
             visualize_mesh(mesh)
+        # mesh.export(temp_output_obj_path)
     end_time = time.time()
     print_timing(f"Processing file {input_nrrd_path}", end_time - start_time, should_print_timing)
 
@@ -362,6 +282,7 @@ if __name__ == "__main__":
     input_directory = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um'
 
     parser = argparse.ArgumentParser(description="Process NRRD files to OBJ meshes.")
+    parser.add_argument("--input-path", type=str, help="Path to the directory containing the midline nrrd files")
     parser.add_argument("--vis", action="store_true", help="Visualize the meshes after creation for testing.")
     parser.add_argument("--test", action="store_true", help="Process only the first NRRD file found for testing.")
     parser.add_argument("--rcm", type=float, default=50, help="Reconnection multiplier for the surface.")
@@ -377,6 +298,9 @@ if __name__ == "__main__":
     
     stime = time.time()
     reconnection_mult = args.rcm
+
+    if args.input_path:
+        input_directory = args.input_path
     
     if args.test:
         #temp testing

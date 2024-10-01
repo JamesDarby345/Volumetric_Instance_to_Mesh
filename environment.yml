@@ -15,3 +15,6 @@ dependencies:
   - pynrrd
   - numba
   - graph-tool
+  - open3d
+  - pip:
+    - fastmorph
