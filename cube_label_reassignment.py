@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import argparse
 
 from tqdm import tqdm
-from midline_helper_simplified import create_slicer_nrrd_header
+from midline_helper_simplified import create_slicer_nrrd_header, generate_colormap, generate_light_colormap
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from filter_and_reassign_labels import process_mask_files
 
@@ -320,7 +320,7 @@ def create_label_group_mapping(label_groups, mask_files):
     
     return mapping
 
-def relabel_single_cube(z_y_x, file_path, output_folder, label_group_mapping, overwrite=False):
+def relabel_single_cube(z_y_x, colors, file_path, output_folder, label_group_mapping, overwrite=False):
     try:
         cube, header = nrrd.read(file_path)
         
@@ -361,19 +361,19 @@ def relabel_single_cube(z_y_x, file_path, output_folder, label_group_mapping, ov
     output_path = os.path.join(output_folder, new_filename)
     z,y,x = z_y_x.split('_')
     z, y, x = int(z), int(y), int(x)
-    new_header = create_slicer_nrrd_header(relabeled_cube, z, y, x, encoding='gzip')
+    new_header = create_slicer_nrrd_header(relabeled_cube, colors, z, y, x, encoding='gzip')
     nrrd.write(output_path, relabeled_cube.astype(dtype), new_header)
     
     return f"Relabeled cube saved: {output_path}"
 
-def relabel_cubes(label_group_mapping, mask_files, output_folder=None, overwrite=False):
+def relabel_cubes(label_group_mapping, mask_files, colors, output_folder=None, overwrite=False):
     if output_folder:
         os.makedirs(output_folder, exist_ok=True)
 
     errors = []
 
     with ProcessPoolExecutor() as executor:
-        futures = [executor.submit(relabel_single_cube, z_y_x, file_path, output_folder, label_group_mapping, overwrite) for z_y_x, file_path in mask_files.items()]
+        futures = [executor.submit(relabel_single_cube, z_y_x, colors, file_path, output_folder, label_group_mapping, overwrite) for z_y_x, file_path in mask_files.items()]
         for future in tqdm(as_completed(futures), total=len(mask_files), desc="Relabeling cubes"):
             result = future.result()
             if result.startswith("Error"):
@@ -416,4 +416,7 @@ if __name__ == '__main__':
     label_groups = group_labels(mask_files, args.cube_size, half_winding_plane=half_winding_plane)
     label_group_mapping = create_label_group_mapping(label_groups, mask_files)
     print(f"Number of label groups: {len(label_groups)}")
-    relabel_cubes(label_group_mapping, mask_files, output_folder=output_directory, overwrite=args.overwrite)
+    print("Number of label groups mapping: ", len(label_group_mapping.keys()))
+    colors = generate_light_colormap(len(label_groups))
+    print(colors)
+    relabel_cubes(label_group_mapping, mask_files, colors, output_folder=output_directory, overwrite=args.overwrite)

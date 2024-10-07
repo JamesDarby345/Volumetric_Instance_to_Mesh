@@ -17,4 +17,5 @@ dependencies:
   - graph-tool
   - open3d
   - pip:
-    - fastmorph
+    - fastmorphy
+    - distinctipy
