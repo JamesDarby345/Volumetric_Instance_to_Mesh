@@ -16,22 +16,24 @@ This script is used to relabel the volumetric cube labels so that the same sheet
 have the same label values across different cubes. 
 """
 
-def find_mask_files(input_directory):
+def find_mask_files(input_directory, suffix=None, test_cubes=None):
     mask_files = {}
-    
+    if not suffix:
+        suffix = '_mask.nrrd'
     for root, _, files in os.walk(input_directory):
         for file in files:
-            if file.endswith('_mask.nrrd'):
+            if file.endswith(suffix):
                 # Extract z_y_x from the filename
-                match = re.search(r'(\d+_\d+_\d+)_mask\.nrrd', file)
+                match = re.search(r'(\d+_\d+_\d+)' + suffix, file)
                 if match:
                     z_y_x = match.group(1)
-                    file_path = os.path.join(root, file)
-                    mask_files[z_y_x] = file_path
+                    if test_cubes is None or z_y_x in test_cubes:
+                        file_path = os.path.join(root, file)
+                        mask_files[z_y_x] = file_path
     
     return mask_files
 
-def group_labels(mask_files, cube_size, half_winding_plane=None):
+def group_labels(mask_files, cube_size, half_winding_plane=None, overlap_min=300):
     label_groups = {}
     processed_cubes = set()
     next_group_id = 1
@@ -48,7 +50,7 @@ def group_labels(mask_files, cube_size, half_winding_plane=None):
                 return group_id
         return None
 
-    def process_cube(z_y_x):
+    def process_cube(z_y_x, overlap_min=300):
         nonlocal next_group_id
         if z_y_x in processed_cubes:
             return
@@ -92,7 +94,7 @@ def group_labels(mask_files, cube_size, half_winding_plane=None):
                     if (current_value < value <= adjacent_value) or (adjacent_value < value <= current_value):
                         continue  # Skip this connection if it crosses the half-winding plane
                 
-                connected_labels = is_connected(cube_data, cube_header, adj_cube_data, adj_header, cube_size=cube_size)
+                connected_labels = is_connected(cube_data, cube_header, adj_cube_data, adj_header, cube_size=cube_size, overlap_min=overlap_min)
                 print(z_y_x, adj_z_y_x, connected_labels)
                 for label1, label2 in connected_labels:
                     item1 = (z_y_x, label1)
@@ -125,7 +127,7 @@ def group_labels(mask_files, cube_size, half_winding_plane=None):
     # all the volumetric labels connecting and being assigned the same label
     for z_y_x in mask_files:
         if z_y_x not in processed_cubes:
-            process_cube(z_y_x)
+            process_cube(z_y_x, overlap_min=overlap_min)
 
     # Print errors at the end
     if errors:
@@ -135,7 +137,7 @@ def group_labels(mask_files, cube_size, half_winding_plane=None):
 
     return label_groups
 
-def is_connected(cube1, header1, cube2, header2, cube_size=256, vis=False):
+def is_connected(cube1, header1, cube2, header2, cube_size=256, vis=False, overlap_min=300):
     # Extract space origin from headers
     origin1 = np.array(header1['space origin'])
     origin2 = np.array(header2['space origin'])
@@ -204,7 +206,7 @@ def is_connected(cube1, header1, cube2, header2, cube_size=256, vis=False):
             if overlap > max_overlap:
                 max_overlap = overlap
                 best_match = label2
-        if best_match is not None:
+        if best_match is not None and max_overlap > overlap_min:
             connected_labels.append((label1, best_match))
 
     # Create a new array for the recolored face2
@@ -267,44 +269,6 @@ def is_connected(cube1, header1, cube2, header2, cube_size=256, vis=False):
         plt.show()
 
     return connected_labels
-
-#Buggy; removing labels etc on cube 2
-def relabel_paired_cubes(cube1, header1, p1, cube2, header2, p2, paired_labels, output_folder):
-    # Create a mapping for the second cube
-    label_map = dict(paired_labels)  # Use paired_labels directly
-    # print(label_map)
-
-    os.makedirs(output_folder, exist_ok=True)
-    # Find the highest label value in both cubes
-    max_label = max(np.max(cube1), np.max(cube2))
-    
-    # Create a new array for the relabeled cube2
-    relabeled_cube2 = np.zeros_like(cube2)
-
-    for new_label, old_label in label_map.items():
-        # If the old_label is in cube2, assign its area to relabeled_cube2 with the new_label value
-        if old_label in np.unique(cube2):
-            relabeled_cube2[cube2 == old_label] = new_label
-            # Set the assigned area to 0 in cube2
-            cube2[cube2 == old_label] = 0
-    
-    # Assign remaining non-zero labels in cube2 to new unique labels
-    for label in np.unique(cube2):
-        if label != 0:
-            max_label += 1
-            relabeled_cube2[cube2 == label] = max_label
-    
-    # Save relabeled cubes
-    for cube, header, original_path in [(cube1, header1, p1), (relabeled_cube2, header2, p2)]:
-        filename = os.path.basename(original_path)
-        new_filename = filename.replace('_mask.nrrd', f'_relabeled_mask.nrrd')
-        output_path = os.path.join(output_folder, new_filename)
-        z,y,x = header['space origin']
-        print(z,y,x)
-        header2 = create_slicer_nrrd_header(cube,z,y,x)
-        nrrd.write(output_path, cube, header2)
-    
-    return relabeled_cube2, label_map
 
 def create_label_group_mapping(label_groups, mask_files):
     mapping = {}
@@ -400,14 +364,14 @@ def save_label_groups_to_json(label_groups):
 
     data_to_save = []
     for group_id, groups in label_groups.items():
-        label_list = []
+        # label_list = []
         zyx_list = []
         for zyx_str, label_val in groups:
-            label_list.append(label_val)
+            # label_list.append(label_val)
             zyx_list.append(zyx_str)
         data_to_save.append({
             'harmonised_label_value': group_id,
-            'label_values': label_list,
+            # 'label_values': label_list,
             'zyx_values': zyx_list
         })
 
@@ -426,7 +390,9 @@ if __name__ == '__main__':
     parser.add_argument("--overwrite", action='store_true', help='Overwrite existing files instead of appending _relabeled_mask to the end of file names')
     parser.add_argument("--no-filter", action='store_true', help='Dont run filter_and_reassign_labels before relabeling if passed')
     parser.add_argument("--half-winding-plane", type=str, default=None, help='Specify the half-winding plane (e.g., "x:4048")')
-    
+    parser.add_argument("--suffix", type=str, default=None, help="Specify the suffix of the mask files (e.g., '_morphed_mask.nrrd')")
+    parser.add_argument('--test', action='store_true', help='Run in test mode with a predefined set of cubes')
+    parser.add_argument('--overlap-min', type=int, default=300, help='Minimum voxel overlap to consider two labels as connected')
     args = parser.parse_args()
 
     default_input_directory = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um'
@@ -437,7 +403,21 @@ if __name__ == '__main__':
     if not args.no_filter:
         process_mask_files(input_directory)
 
-    mask_files = find_mask_files(input_directory)
+    if not args.suffix:
+        suffix = '_mask.nrrd'
+    else:
+        suffix = args.suffix
+
+    test_cubes = None
+    if args.test:
+        test_cubes = ['01744_02256_04048', '01744_02000_04048', '01744_02000_04304']
+        # '01744_02256_03792', '01744_02256_04304',
+
+    mask_files = find_mask_files(input_directory, suffix)
+
+    # If in test mode, filter mask_files to only include test_cubes
+    if test_cubes:
+        mask_files = {k: v for k, v in mask_files.items() if k in test_cubes}
 
     # Parse the half-winding plane argument
     if args.half_winding_plane: 
@@ -446,7 +426,7 @@ if __name__ == '__main__':
     else:
         half_winding_plane = None
 
-    label_groups = group_labels(mask_files, args.cube_size, half_winding_plane=half_winding_plane)
+    label_groups = group_labels(mask_files, args.cube_size, half_winding_plane=half_winding_plane, overlap_min=args.overlap_min )
     label_group_mapping = create_label_group_mapping(label_groups, mask_files)
     save_label_groups_to_json(label_groups)
 

@@ -7,6 +7,24 @@ import time
 import trimesh
 import pyvista as pv
 import distinctipy
+from scipy.ndimage import binary_erosion
+import fastmorph
+
+def morphological_tunnel_filling(arr, label_val, radius=10):
+    arr = (arr > 0).astype(bool)
+    arr = np.pad(arr, pad_width=radius, mode='constant', constant_values=0)
+
+    if radius > 20: 
+        arr = fastmorph.spherical_dilate(arr, radius=radius, parallel=1, in_place=False)
+        arr = fastmorph.spherical_erode(arr, radius=radius, parallel=1, in_place=False)
+    else:
+        arr = numba_dilation_3d_labels(arr, iterations=radius)
+        arr = binary_erosion(arr, iterations=radius)
+
+    arr = arr[radius:-radius, radius:-radius, radius:-radius]
+    arr = np.where(arr > 0, label_val, 0)
+
+    return arr
 
 def generate_light_colormap(N):
     base_colormap = get_light_slicer_colormap()
@@ -146,10 +164,12 @@ def filter_disconnected_parts(mesh, min_vertices=800):
     
     return filtered_mesh
 
-def create_slicer_nrrd_header(data, colors, z=0, y=0, x=0, encoding='gzip'):
+def create_slicer_nrrd_header(data, colors=None, z=0, y=0, x=0, encoding='gzip'):
     unique_values = np.unique(data)
-    # n_colors = len(unique_values) - 1  # Subtract 1 to exclude background (value 0)
-    # colors = generate_colormap(n_colors)
+
+    if not colors:
+        n_colors = len(unique_values) - 1  # Subtract 1 to exclude background (value 0)
+        colors = generate_light_colormap(n_colors)
 
     header = {
         'type': data.dtype.name,
@@ -165,6 +185,7 @@ def create_slicer_nrrd_header(data, colors, z=0, y=0, x=0, encoding='gzip'):
 
     # Add segment information
     segment_index = 0
+    
     for value in unique_values:
         if value == 0:  # Skip background
             continue
