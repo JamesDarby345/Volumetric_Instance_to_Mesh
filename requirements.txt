@@ -9,3 +9,4 @@ pyvista
 pynrrd
 numba
 fastmorph
+distinctipy

@@ -4,9 +4,10 @@ import numpy as np
 import nrrd
 import matplotlib.pyplot as plt
 import argparse
+import json
 
 from tqdm import tqdm
-from midline_helper_simplified import create_slicer_nrrd_header, generate_colormap, generate_light_colormap
+from midline_helper_simplified import create_slicer_nrrd_header, generate_light_colormap
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from filter_and_reassign_labels import process_mask_files
 
@@ -384,6 +385,38 @@ def relabel_cubes(label_group_mapping, mask_files, colors, output_folder=None, o
         for error in errors:
             print(error)
 
+def uint8_to_int(obj):
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, dict):
+        return {k: uint8_to_int(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [uint8_to_int(item) for item in obj]
+    return obj
+
+def save_label_groups_to_json(label_groups):
+    
+    output_path = 'label_groups.json'
+
+    data_to_save = []
+    for group_id, groups in label_groups.items():
+        label_list = []
+        zyx_list = []
+        for zyx_str, label_val in groups:
+            label_list.append(label_val)
+            zyx_list.append(zyx_str)
+        data_to_save.append({
+            'harmonised_label_value': group_id,
+            'label_values': label_list,
+            'zyx_values': zyx_list
+        })
+
+    # Convert uint8 to int
+    data_to_save = uint8_to_int(data_to_save)
+
+    with open(output_path, 'w') as f:
+        json.dump(data_to_save, f, indent=4)
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Relabel sheets across nrrd cubes.')
     parser.add_argument('--vis', action='store_true', help='Enable visualization for testing')
@@ -415,8 +448,8 @@ if __name__ == '__main__':
 
     label_groups = group_labels(mask_files, args.cube_size, half_winding_plane=half_winding_plane)
     label_group_mapping = create_label_group_mapping(label_groups, mask_files)
-    print(f"Number of label groups: {len(label_groups)}")
-    print("Number of label groups mapping: ", len(label_group_mapping.keys()))
+    save_label_groups_to_json(label_groups)
+
+    print(f'Generating colormap for {len(label_groups)} labels...')
     colors = generate_light_colormap(len(label_groups))
-    print(colors)
     relabel_cubes(label_group_mapping, mask_files, colors, output_folder=output_directory, overwrite=args.overwrite)

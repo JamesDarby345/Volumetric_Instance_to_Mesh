@@ -3,3 +3,4 @@ __pycache__
 /relabeled_cubes
 /merged_meshes
 /point_clouds
+label_groups.json

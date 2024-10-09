@@ -8,8 +8,6 @@ import trimesh
 import pyvista as pv
 import distinctipy
 
-
-
 def generate_light_colormap(N):
     base_colormap = get_light_slicer_colormap()
     colors = list(base_colormap.values())
@@ -17,10 +15,7 @@ def generate_light_colormap(N):
         generated_colors = distinctipy.get_colors(N - 30, pastel_factor=0.7)
         colors_255 = [[int(c * 255) for c in generated_color] + [255] for generated_color in generated_colors]
         colors.extend(colors_255)
-    # colors = distinctipy.get_colors(N, pastel_factor=0.7)
-    print(colors)
-    # colors_255 = [[int(c * 255) for c in color] + [255] for color in colors]
-    # print(colors_255)
+
     return {i: color for i, color in enumerate(colors)}
 
 def get_light_slicer_colormap():
