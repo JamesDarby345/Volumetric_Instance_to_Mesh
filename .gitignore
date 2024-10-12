@@ -1,6 +1,10 @@
 __pycache__
 .DS_Store
 /relabeled_cubes
+/relabeled_cubes_morph
+/downsampled_morph_cubes
 /merged_meshes
 /point_clouds
+/original_masks
+/temp_move_cubes
 label_groups.json

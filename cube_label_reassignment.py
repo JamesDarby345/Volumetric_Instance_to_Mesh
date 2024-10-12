@@ -285,11 +285,10 @@ def create_label_group_mapping(label_groups, mask_files):
     
     return mapping
 
-def relabel_single_cube(z_y_x, colors, file_path, output_folder, label_group_mapping, overwrite=False):
+def relabel_single_cube(z_y_x, colors, file_path, output_folder, label_group_mapping, overwrite, downsample_factor, dsonly):
     try:
         cube, header = nrrd.read(file_path)
         
-        # Check if the dimension is 3
         if header.get('dimension') != 3:
             return f"Error: Cube {z_y_x} has incorrect dimension: {header.get('dimension')}. Expected 3."
         
@@ -303,42 +302,49 @@ def relabel_single_cube(z_y_x, colors, file_path, output_folder, label_group_map
     cube = cube.astype(dtype)
     relabeled_cube = np.zeros_like(cube, dtype=dtype)
     
-    # Create a mapping for this cube
     label_map = {label: group_id for label, group_id in label_group_mapping[z_y_x]}
-    # print(label_map)
-    # Relabel the cube
     for old_label, new_label in label_map.items():
         relabeled_cube[cube == old_label] = new_label
     
-    # Handle any labels not in the mapping, should be none
     unmapped_labels = set(np.unique(cube)) - set(label_map.keys()) - {0}
     max_label = max(max(label_map.values()), np.max(relabeled_cube))
     for old_label in unmapped_labels:
         max_label += 1
         relabeled_cube[cube == old_label] = max_label
     
-    # Save relabeled cube
     filename = os.path.basename(file_path)
     if not overwrite:
         new_filename = filename.replace('_mask.nrrd', '_relabeled_mask.nrrd')
     else:
         new_filename = filename
     output_path = os.path.join(output_folder, new_filename)
-    z,y,x = z_y_x.split('_')
+    z, y, x = z_y_x.split('_')
     z, y, x = int(z), int(y), int(x)
+    
+    if downsample_factor:
+        relabeled_cube = relabeled_cube[::downsample_factor, ::downsample_factor, ::downsample_factor]
+        ds_z, ds_y, ds_x = z // downsample_factor, y // downsample_factor, x // downsample_factor
+        new_filename = new_filename.replace('_mask.nrrd', f'_d{downsample_factor}_mask.nrrd')
+        ds_output_path = os.path.join(output_folder, new_filename)
+        ds_header = create_slicer_nrrd_header(relabeled_cube, colors, ds_z, ds_y, ds_x, encoding='gzip')
+        nrrd.write(ds_output_path, relabeled_cube.astype(dtype), ds_header)
+        if dsonly:
+            return f"Downsampled only relabeled cube saved: {ds_output_path}"
+    
     new_header = create_slicer_nrrd_header(relabeled_cube, colors, z, y, x, encoding='gzip')
     nrrd.write(output_path, relabeled_cube.astype(dtype), new_header)
     
     return f"Relabeled cube saved: {output_path}"
 
-def relabel_cubes(label_group_mapping, mask_files, colors, output_folder=None, overwrite=False):
+def relabel_cubes(label_group_mapping, mask_files, colors, output_folder=None, overwrite=False, downsample_factor=None, dsonly=False):
     if output_folder:
         os.makedirs(output_folder, exist_ok=True)
 
     errors = []
 
     with ProcessPoolExecutor() as executor:
-        futures = [executor.submit(relabel_single_cube, z_y_x, colors, file_path, output_folder, label_group_mapping, overwrite) for z_y_x, file_path in mask_files.items()]
+        futures = [executor.submit(relabel_single_cube, z_y_x, colors, file_path, output_folder, label_group_mapping, overwrite, downsample_factor, dsonly) 
+                   for z_y_x, file_path in mask_files.items()]
         for future in tqdm(as_completed(futures), total=len(mask_files), desc="Relabeling cubes"):
             result = future.result()
             if result.startswith("Error"):
@@ -393,6 +399,8 @@ if __name__ == '__main__':
     parser.add_argument("--suffix", type=str, default=None, help="Specify the suffix of the mask files (e.g., '_morphed_mask.nrrd')")
     parser.add_argument('--test', action='store_true', help='Run in test mode with a predefined set of cubes')
     parser.add_argument('--overlap-min', type=int, default=300, help='Minimum voxel overlap to consider two labels as connected')
+    parser.add_argument('--downsample', type=int, default=None, choices=[2,4,8,16,32], help='Downsample factor (e.g., 2,4,8,16)')
+    parser.add_argument('--dsonly', action='store_true', help='Save only downsampled files')
     args = parser.parse_args()
 
     default_input_directory = '/Users/jamesdarby/Desktop/manually_labelled_cubes/public_s1-8um'
@@ -432,4 +440,4 @@ if __name__ == '__main__':
 
     print(f'Generating colormap for {len(label_groups)} labels...')
     colors = generate_light_colormap(len(label_groups))
-    relabel_cubes(label_group_mapping, mask_files, colors, output_folder=output_directory, overwrite=args.overwrite)
+    relabel_cubes(label_group_mapping, mask_files, colors, output_folder=output_directory, overwrite=args.overwrite, downsample_factor=args.downsample, dsonly=args.dsonly)
