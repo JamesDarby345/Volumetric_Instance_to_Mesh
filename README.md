@@ -4,6 +4,8 @@
 
 This repository contains code to convert volumetrically labelled cubes into .obj files for flattening and rendering. The process involves taking an instance label, reducing it to a midline label (a 1 voxel thick representation), and then using that label to create an .obj file. The code also aims to maintain/create the manifold and non-intersecting mesh properties required for the autosegmentation grand prize from the volumetric instance labels.
 
+See the [wiki](https://github.com/JamesDarby345/Volumetric_Instance_to_Mesh/wiki) for details on the different approaches in the files.
+
 ## Install
 graph-tool requires conda to install, so we need to setup a conda environment.
 This assumes you have conda installed, if not, follow the instructions here: https://docs.anaconda.com/free/miniconda/miniconda-install/
