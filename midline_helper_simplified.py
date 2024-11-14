@@ -9,6 +9,27 @@ import pyvista as pv
 import distinctipy
 from scipy.ndimage import binary_erosion
 import fastmorph
+import pymeshlab
+
+#reports on manifoldness and self-intersections of a pymeshlab mesh
+def pymeshlab_report(ms):
+    report = ms.report()
+    # Retrieve non-manifold vertices and edges
+    non_manifold_vertices = report.non_manifold_vertices
+    non_manifold_edges = report.non_manifold_edges
+
+    # Output the results
+    print(f"Non-manifold vertices: {non_manifold_vertices}")
+    print(f"Non-manifold edges: {non_manifold_edges}")
+
+    # Apply the filter to select self-intersecting faces
+    ms.compute_selection_by_self_intersections_per_face()
+
+    # Retrieve the number of selected faces
+    selected_faces = ms.current_mesh().selected_face_number()
+
+    # Output the result
+    print(f"Number of self-intersecting faces: {selected_faces}")
 
 def morphological_tunnel_filling(arr, label_val, radius=10):
     arr = (arr > 0).astype(bool)

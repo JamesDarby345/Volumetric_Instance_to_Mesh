@@ -16,6 +16,8 @@ dependencies:
   - numba
   - graph-tool
   - open3d
+  - zarr
   - pip:
-    - fastmorphy
+    - fastmorph
     - distinctipy
+    - pymeshlab
